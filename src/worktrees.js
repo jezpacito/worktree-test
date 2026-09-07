@@ -119,12 +119,49 @@ async function hasChanges({ worktreePath }) {
   return stdout.trim().length > 0;
 }
 
+async function pruneWorktrees({ repoPath }) {
+  await run('git', ['worktree', 'prune'], repoPath);
+}
+
+// Parse `git worktree list --porcelain` output into
+// [{ path, branch, head, detached, bare }]. Pure function, unit-tested.
+function parseWorktreePorcelain(text) {
+  const out = [];
+  let cur = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      if (cur) out.push(cur);
+      cur = { path: line.slice('worktree '.length).trim(), branch: null, head: null, detached: false, bare: false };
+    } else if (!cur) {
+      continue;
+    } else if (line.startsWith('HEAD ')) {
+      cur.head = line.slice('HEAD '.length).trim();
+    } else if (line.startsWith('branch ')) {
+      cur.branch = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
+    } else if (line === 'detached') {
+      cur.detached = true;
+    } else if (line === 'bare') {
+      cur.bare = true;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.filter((w) => !w.bare);
+}
+
+async function listGitWorktrees({ repoPath }) {
+  const { stdout } = await run('git', ['worktree', 'list', '--porcelain'], repoPath);
+  return parseWorktreePorcelain(stdout);
+}
+
 module.exports = {
   createWorktree,
   linkNodeModules,
   reinstallDeps,
   copyAndPatchEnvFile,
   removeWorktree,
+  pruneWorktrees,
   hasChanges,
+  listGitWorktrees,
+  parseWorktreePorcelain,
   run
 };

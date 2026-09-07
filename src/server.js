@@ -9,6 +9,7 @@ const wt = require('./worktrees');
 const git = require('./git');
 const session = require('./session');
 const usage = require('./usage');
+const { reconcile } = require('./reconcile');
 
 function createApp() {
   const app = express();
@@ -24,9 +25,17 @@ function createApp() {
 
   app.post('/api/config', (req, res) => {
     const s = state.load();
-    const { repoPath, devCommand, portEnvVar, envFileName, startPort, worktreesRoot } = req.body;
+    const { repoPath, devCommand, portEnvVar, envFileName, startPort, worktreesRoot, pricing, costThreshold } = req.body;
     if (repoPath && !fs.existsSync(path.join(repoPath, '.git'))) {
       return res.status(400).json({ error: `${repoPath} does not look like a git repo root (no .git found)` });
+    }
+    let parsedPricing;
+    if (pricing !== undefined && pricing !== '') {
+      try {
+        parsedPricing = typeof pricing === 'string' ? JSON.parse(pricing) : pricing;
+      } catch (e) {
+        return res.status(400).json({ error: `pricing is not valid JSON: ${e.message}` });
+      }
     }
     s.config = {
       ...s.config,
@@ -35,6 +44,8 @@ function createApp() {
       ...(portEnvVar ? { portEnvVar } : {}),
       ...(envFileName ? { envFileName } : {}),
       ...(startPort ? { startPort: Number(startPort) } : {}),
+      ...(parsedPricing ? { pricing: parsedPricing } : {}),
+      ...(costThreshold !== undefined && costThreshold !== '' ? { costThreshold: Number(costThreshold) } : {}),
       worktreesRoot: worktreesRoot || (repoPath ? path.join(path.dirname(repoPath), '.worktrees') : s.config.worktreesRoot)
     };
     if (!s.nextPort || s.nextPort < s.config.startPort) s.nextPort = s.config.startPort;
@@ -46,20 +57,59 @@ function createApp() {
 
   app.get('/api/worktrees', async (req, res) => {
     const s = state.load();
-    const list = await Promise.all(Object.values(s.worktrees).map(async (w) => {
+    await reconcile(s);
+    state.save(s);
+
+    const pricing = s.config.pricing || {};
+    const list = Object.values(s.worktrees).map((w) => {
       const u = usage.usageForWorktree(w.path);
-      return { ...w, usage: { ...u.totals, total: usage.totalTokens(u.totals), available: u.available } };
-    }));
+      const cost = usage.costFor(u.perModel, pricing);
+      return {
+        ...w,
+        usage: {
+          total: usage.totalTokens(u.totals),
+          available: u.available,
+          usd: cost.usd,
+          estimated: cost.estimated,
+          sessionCount: u.sessions.length
+        }
+      };
+    });
     res.json(list);
+  });
+
+  // Per-worktree cost breakdown + optimization tips (fetched when a row is expanded).
+  app.get('/api/worktrees/:id/usage', (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+
+    const pricing = s.config.pricing || {};
+    const u = usage.usageForWorktree(w.path);
+    const cost = usage.costFor(u.perModel, pricing);
+    const sessions = u.sessions.map((se) => ({
+      file: se.file,
+      mtime: se.mtime,
+      total: usage.totalTokens(se.totals),
+      usd: usage.costFor(se.perModel, pricing).usd
+    }));
+    const tips = usage.recommendations({
+      perModel: u.perModel,
+      sessionCount: u.sessions.length,
+      usd: cost.usd,
+      costThreshold: s.config.costThreshold || 20
+    });
+    res.json({ available: u.available, usd: cost.usd, estimated: cost.estimated, byModel: cost.byModel, sessions, recommendations: tips });
   });
 
   app.post('/api/worktrees', async (req, res) => {
     const s = state.load();
-    const { repoPath, worktreesRoot, dashboardPort } = s.config;
+    const { repoPath, worktreesRoot } = s.config;
     if (!repoPath) return res.status(400).json({ error: 'Set the project (repoPath) in Settings first.' });
 
-    const { branch, baseRef, claudeArgs } = req.body;
+    const { branch, baseRef, claudeArgs, withClaude } = req.body;
     if (!branch) return res.status(400).json({ error: 'branch is required' });
+    const wantClaude = withClaude !== false;
 
     fs.mkdirSync(worktreesRoot, { recursive: true });
 
@@ -78,6 +128,8 @@ function createApp() {
       const record = {
         id, branch, path: worktreePath, port,
         status: 'created',
+        tracked: true,
+        adopted: true,
         nodeModules: nmResult,
         createdAt: new Date().toISOString(),
         sessionPid: null,
@@ -93,11 +145,12 @@ function createApp() {
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
-        claudeArgs
+        claudeArgs,
+        withClaude: wantClaude
       });
 
       const s2 = state.load();
-      s2.worktrees[id].status = 'session-running';
+      s2.worktrees[id].status = wantClaude ? 'session-running' : 'dev-running';
       s2.worktrees[id].sessionPid = launch.pid;
       state.save(s2);
 
@@ -105,6 +158,72 @@ function createApp() {
     } catch (e) {
       res.status(500).json({ error: e.message, detail: e.stderr || e.stdout || null });
     }
+  });
+
+  // Start (or restart) an already-known worktree: discovered, idle, or one left
+  // over from a previous dashboard run. Heavy setup (port / env / node_modules)
+  // happens here, and only for the parts that are missing.
+  app.post('/api/worktrees/:id/start', async (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
+    if (!s.config.repoPath) return res.status(400).json({ error: 'Set the project (repoPath) in Settings first.' });
+
+    const wantClaude = req.body.withClaude !== false;
+
+    try {
+      if (w.port == null) w.port = await allocatePort(s);
+
+      if (!fs.existsSync(path.join(w.path, 'node_modules'))) {
+        w.nodeModules = await wt.linkNodeModules({ repoPath: s.config.repoPath, worktreePath: w.path });
+      }
+
+      // Patch the env file only on first adoption -- later starts leave any
+      // hand-edits in that worktree's env file alone.
+      if (!w.adopted) {
+        wt.copyAndPatchEnvFile({
+          repoPath: s.config.repoPath,
+          worktreePath: w.path,
+          envFileName: s.config.envFileName,
+          portEnvVar: s.config.portEnvVar,
+          port: w.port
+        });
+        w.adopted = true;
+      }
+      w.tracked = true;
+      state.save(s);
+
+      const launch = await session.launchSession({
+        worktreeId: w.id,
+        worktreePath: w.path,
+        port: w.port,
+        portEnvVar: s.config.portEnvVar,
+        devCommand: s.config.devCommand,
+        dashboardPort: s.config.dashboardPort,
+        claudeArgs: req.body.claudeArgs,
+        withClaude: wantClaude
+      });
+
+      const s2 = state.load();
+      s2.worktrees[w.id].status = wantClaude ? 'session-running' : 'dev-running';
+      s2.worktrees[w.id].sessionPid = launch.pid;
+      state.save(s2);
+      res.json(s2.worktrees[w.id]);
+    } catch (e) {
+      res.status(500).json({ error: e.message, detail: e.stderr || e.stdout || null });
+    }
+  });
+
+  // "I closed that terminal myself" -- reset a running record to idle.
+  app.post('/api/worktrees/:id/mark-idle', (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    w.status = 'idle';
+    w.sessionPid = null;
+    state.save(s);
+    res.json(w);
   });
 
   // Called by the session's PowerShell script when the Claude CLI process exits.
@@ -186,12 +305,19 @@ function createApp() {
     }
   });
 
+  // Remove a worktree. Works for tracked, discovered, and stale ("missing")
+  // records. The branch and its commits are always kept.
   app.delete('/api/worktrees/:id', async (req, res) => {
     const s = state.load();
     const w = s.worktrees[req.params.id];
     if (!w) return res.status(404).json({ error: 'unknown worktree id' });
     try {
-      await wt.removeWorktree({ repoPath: s.config.repoPath, worktreePath: w.path });
+      if (fs.existsSync(w.path)) {
+        await wt.removeWorktree({ repoPath: s.config.repoPath, worktreePath: w.path });
+      } else if (s.config.repoPath) {
+        // Folder already gone -- just clear git's stale bookkeeping.
+        await wt.pruneWorktrees({ repoPath: s.config.repoPath }).catch(() => {});
+      }
       delete s.worktrees[req.params.id];
       state.save(s);
       res.json({ ok: true });
@@ -202,12 +328,15 @@ function createApp() {
 
   app.get('/api/usage/total', (req, res) => {
     const s = state.load();
+    const pricing = s.config.pricing || {};
     const totals = {};
+    let usd = 0;
     for (const w of Object.values(s.worktrees)) {
       const u = usage.usageForWorktree(w.path);
       for (const f of usage.TOKEN_FIELDS) totals[f] = (totals[f] || 0) + (u.totals[f] || 0);
+      usd += usage.costFor(u.perModel, pricing).usd;
     }
-    res.json({ totals, total: usage.totalTokens(totals) });
+    res.json({ totals, total: usage.totalTokens(totals), usd });
   });
 
   return app;
