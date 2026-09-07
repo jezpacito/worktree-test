@@ -47,7 +47,41 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; }
 .status { padding: 2px 8px; border-radius: 999px; font-size: 11px; }
-.status-created, .status-session-running { background: rgba(91,140,255,.15); color: var(--accent); }
+.status-created, .status-session-running, .status-dev-running { background: rgba(91,140,255,.15); color: var(--accent); }
 .status-committed-pending-push { background: rgba(232,179,57,.15); color: var(--warn); }
 .status-pr-created { background: rgba(62,207,142,.15); color: var(--ok); }
-.status-no-changes, .status-session-exited { background: rgba(154,162,177,.15); color: var(--muted); }
+.status-no-changes, .status-session-exited, .status-idle { background: rgba(154,162,177,.15); color: var(--muted); }
+.status-discovered { background: rgba(91,140,255,.10); color: var(--muted); }
+.status-missing { background: rgba(193,64,64,.15); color: #e05555; }
+
+.pills { display:flex; gap:8px; }
+textarea {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%; resize: vertical;
+}
+label.checkbox, label.inline-check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+label.inline-check { display: inline-flex; font-size: 12px; margin-right: 4px; }
+
+.toolbar { display:flex; align-items:center; gap:8px; margin-bottom: 12px; }
+.toolbar .spacer { flex: 1; }
+.toolbar input { min-width: 220px; }
+
+.tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--muted);
+}
+td.path {
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 12px;
+}
+button.link {
+  background: transparent; border: none; color: var(--text); padding: 0; font-size: 13px; cursor: pointer;
+}
+.detail-row td { background: rgba(127,127,127,.05); }
+.detail-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 6px 2px; }
+.detail-grid ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+.detail-grid li { margin-bottom: 4px; }
+table.mini { font-size: 12px; }
+table.mini th, table.mini td { padding: 4px 6px; }
+@media (max-width: 720px) { .detail-grid { grid-template-columns: 1fr; } }

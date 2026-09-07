@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { DEFAULT_PRICING } = require('./usage');
 
 const APP_DIR = path.join(os.homedir(), '.worktree-dashboard');
 const SESSIONS_DIR = path.join(APP_DIR, 'launchers');
@@ -29,7 +30,9 @@ const DEFAULT_STATE = {
     envFileName: '.env.development',
     startPort: 5002,
     worktreesRoot: null,     // where sibling worktree folders get created; default: sibling of repoPath
-    dashboardPort: 4999
+    dashboardPort: 4999,
+    pricing: DEFAULT_PRICING, // $/1M tokens per model, editable in Settings; used for cost estimates
+    costThreshold: 20         // $ per worktree above which an optimization tip fires
   },
   worktrees: {},   // id -> worktree record
   nextPort: 5002

@@ -28,13 +28,33 @@ project's own config files and without needing admin rights on Windows.
   port -- stay up for as long as that terminal is open, regardless of what
   you type inside the Claude session. Only exiting the Claude CLI session
   (Ctrl+D / `exit`) stops the dev server and frees the port.
-- **Auto-commits (never auto-pushes)** when you exit the Claude session, so
+- **Or launches the dev server on its own**, no Claude. Untick "Run Claude in
+  this session" (on the create form, or the per-row checkbox next to "Start").
+  You get a terminal running just the dev server on that worktree's port;
+  close it or Ctrl+C to stop it. No auto-commit in this mode -- use
+  "Commit now" if you made changes.
+- **Discovers worktrees it didn't create.** Worktrees made by hand
+  (`git worktree add`) or in a previous dashboard run show up in the table
+  marked `discovered`. Clicking "Start" adopts one: it allocates a port,
+  patches the env file once (later starts leave your edits alone), links
+  `node_modules`, and launches the session. Records left "running" from a
+  previous dashboard process are reset to `idle` on restart; use "Mark idle"
+  to reset one yourself after you've closed its terminal. A worktree whose
+  folder has vanished is shown as `missing` and can be cleared with "Remove".
+- **Auto-commits (never auto-pushes)** when you exit a Claude session, so
   work-in-progress is always saved locally. Pushing and opening a PR only
   happens when you click "Push & create PR" in the dashboard -- that's the
   explicit confirmation step.
-- **Dashboard view** of every active worktree: branch, port, status
-  (created / session running / committed, pending push / PR created), and a
-  best-effort token-usage count per worktree and in total.
+- **Dashboard view** of every worktree: branch, path, port, status, an
+  estimated dollar cost, and a best-effort token count -- per worktree and
+  in total. The table has a branch filter and pages 10 at a time.
+- **Estimated cost per worktree, with tips.** Click the cost cell to expand a
+  per-session breakdown plus a few plain-language suggestions for keeping the
+  session cheap but effective (cache reuse, output size, resumed-session
+  count, spend threshold). Costs multiply the token counts from Claude CLI's
+  local transcripts by a per-model price map ($/1M tokens) you can edit in
+  Settings; an asterisk on a figure means an unknown model id was priced at
+  the fallback rate. Treat the numbers as a rough signal, not a bill.
 
 ## Requirements
 
@@ -71,10 +91,16 @@ In **Settings**, fill in:
   `VITE_PORT`, `NEXT_PUBLIC_PORT`.
 - **Env file name** -- e.g. `.env.development`.
 - **Start port** -- defaults to `5002`.
+- **Cost alert threshold ($)** -- a worktree that has cost more than this
+  gets a "split the task / clear context" tip. Defaults to `20`.
+- **Model pricing (JSON)** -- `$` per 1M tokens per model
+  (`input` / `output` / `cacheWrite` / `cacheRead`), plus a `default` row
+  used for model ids not listed. Seeded from the public Claude price list.
 
 Then, for each new task:
-1. Type a branch name (and optionally a base ref, default `HEAD`) and click
-   **Create worktree + launch Claude session**.
+1. Type a branch name (and optionally a base ref, default `HEAD`), leave
+   **Run Claude in this session** ticked, and click **Create worktree +
+   launch session**.
 2. A terminal opens with your dev server running in the background and
    `claude` running in the foreground. Run your company skill / do your work
    as normal.
@@ -83,19 +109,34 @@ Then, for each new task:
 4. When you're happy, click **Push & create PR** in the dashboard -- this is
    the only step that pushes anything or talks to GitHub.
 
+To start an existing worktree without Claude (just the dev server), find its
+row in the table, untick the per-row **Claude** checkbox, and click **Start**.
+
+## Running the tests
+
+```
+npm test
+```
+
+Covers the pure logic only (worktree-list parsing, cost/pricing math,
+optimization-tip rules, state reconciliation). The terminal-spawning paths
+aren't automated.
+
 ## Where state lives
 
 Everything the dashboard tracks (config, worktree list, port assignments,
 generated launcher scripts) lives under `%USERPROFILE%\.worktree-dashboard\`,
 entirely outside your project repo.
 
-## Usage monitoring caveat
+## Usage & cost monitoring caveat
 
 Token-usage numbers are read from Claude CLI's local session transcripts
 under `~/.claude/projects/**/*.jsonl`. This is genuinely best-effort: the
 transcript schema isn't a stable public API, so if your Claude CLI version
-stores things differently you may just see `--`. Treat it as a rough signal,
-not a billing source of truth.
+stores things differently you may just see `--`. Dollar costs are those token
+counts multiplied by the editable price map in Settings -- an estimate, and
+flagged with `*` when a model id had to be priced at the fallback rate. Treat
+both as a rough signal, not a billing source of truth.
 
 ## Known tradeoffs / things to adjust for your setup
 

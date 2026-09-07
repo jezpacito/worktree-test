@@ -27,7 +27,29 @@ function which(cmd) {
   });
 }
 
-function buildPowerShellScript({ worktreePath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs }) {
+function buildPowerShellScript({ worktreePath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
+  const wtPath = worktreePath.replace(/"/g, '""');
+
+  // Dev-server-only mode: no Claude, no background job, no auto-commit callback.
+  // The dev command runs in the foreground so closing the window (or Ctrl+C)
+  // stops it and frees the port. The dashboard downgrades the record to "idle"
+  // on its next restart, or you can hit "Mark idle" now.
+  if (!withClaude) {
+    return `
+$ErrorActionPreference = 'Continue'
+Set-Location -LiteralPath "${wtPath}"
+$env:${portEnvVar} = "${port}"
+
+Write-Host "== worktree-dashboard session (dev server only) ==" -ForegroundColor Cyan
+Write-Host "Worktree: ${wtPath}"
+Write-Host "Dev server port: ${port} (env ${portEnvVar})"
+Write-Host "No Claude session. Close this window or press Ctrl+C to stop the dev server and free the port." -ForegroundColor Cyan
+Write-Host ""
+
+${devCommand}
+`;
+  }
+
   // Every ${...} PowerShell variable below is escaped with a backtick where
   // it must NOT be interpolated by the JS template literal.
   return `
@@ -71,10 +93,10 @@ Write-Host "Port ${port} is now free. You can close this window." -ForegroundCol
 `;
 }
 
-async function launchSession({ worktreeId, worktreePath, port, portEnvVar, devCommand, dashboardPort, claudeArgs }) {
+async function launchSession({ worktreeId, worktreePath, port, portEnvVar, devCommand, dashboardPort, claudeArgs, withClaude = true }) {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}.ps1`);
-  const script = buildPowerShellScript({ worktreePath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs });
+  const script = buildPowerShellScript({ worktreePath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude });
   fs.writeFileSync(scriptPath, script, 'utf8');
 
   const wt = process.platform === 'win32' ? await which('wt.exe') : null;
@@ -89,6 +111,11 @@ async function launchSession({ worktreeId, worktreePath, port, portEnvVar, devCo
   } else if (process.platform === 'win32') {
     child = spawn('powershell.exe', ['-NoExit', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
       detached: true, stdio: 'ignore', windowsHide: false
+    });
+  } else if (!withClaude) {
+    // Non-Windows, dev-only: run the dev server in the foreground, no callback.
+    child = spawn('bash', ['-lc', `cd "${worktreePath}" && ${portEnvVar}=${port} ${devCommand}`], {
+      detached: true, stdio: 'ignore'
     });
   } else {
     // Non-Windows fallback: just run claude directly in a detached shell (no split-pane dev job UI, best-effort).
