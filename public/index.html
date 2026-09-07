@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Worktree Dashboard</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header>
+    <h1>Worktree Dashboard</h1>
+    <div id="totalUsage" class="pill">Total tokens: --</div>
+  </header>
+
+  <section id="settingsPanel" class="card">
+    <h2>Project settings</h2>
+    <div class="grid">
+      <label>Project path (repo root)
+        <input id="cfgRepoPath" placeholder="C:\Users\ana\code\my-app" />
+      </label>
+      <label>Dev command
+        <input id="cfgDevCommand" placeholder="npm run dev" />
+      </label>
+      <label>Port env var
+        <input id="cfgPortEnvVar" placeholder="PORT" />
+      </label>
+      <label>Env file name
+        <input id="cfgEnvFile" placeholder=".env.development" />
+      </label>
+      <label>Start port
+        <input id="cfgStartPort" type="number" placeholder="5002" />
+      </label>
+      <label>Worktrees folder (optional)
+        <input id="cfgWorktreesRoot" placeholder="sibling .worktrees folder by default" />
+      </label>
+    </div>
+    <button id="saveConfig">Save settings</button>
+    <span id="configStatus" class="muted"></span>
+  </section>
+
+  <section class="card">
+    <h2>New worktree session</h2>
+    <div class="grid">
+      <label>Branch name
+        <input id="newBranch" placeholder="feature/my-task" />
+      </label>
+      <label>Base ref (optional)
+        <input id="newBaseRef" placeholder="main" />
+      </label>
+    </div>
+    <button id="createWorktree">Create worktree + launch Claude session</button>
+    <span id="createStatus" class="muted"></span>
+  </section>
+
+  <section class="card">
+    <h2>Active worktrees</h2>
+    <table id="wtTable">
+      <thead>
+        <tr>
+          <th>Branch</th><th>Port</th><th>Status</th><th>Tokens</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="wtBody"></tbody>
+    </table>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "worktree-dashboard",
+  "version": "1.0.0",
+  "description": "Lightweight local dashboard for managing Git worktrees + Claude CLI sessions, no admin rights required.",
+  "main": "src/server.js",
+  "bin": {
+    "wtd": "bin/wtd.js"
+  },
+  "scripts": {
+    "start": "node bin/wtd.js start"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

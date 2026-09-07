@@ -1,0 +1,53 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0f1115;
+  --card: #171a21;
+  --border: #2a2e38;
+  --text: #e6e8ec;
+  --muted: #9aa2b1;
+  --accent: #5b8cff;
+  --ok: #3ecf8e;
+  --warn: #e8b339;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg:#f6f7f9; --card:#fff; --border:#e3e5e9; --text:#1a1d23; --muted:#666e7d; }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  padding: 24px; max-width: 980px; margin-inline: auto;
+}
+header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px; margin-bottom: 18px;
+}
+.pill {
+  background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+  padding: 6px 14px; font-size: 13px; color: var(--muted);
+}
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+label { display:flex; flex-direction:column; gap:4px; font-size: 12px; color: var(--muted); }
+input {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; color: var(--text); font-size: 13px;
+}
+button {
+  background: var(--accent); color: white; border: none; border-radius: 6px;
+  padding: 9px 14px; font-size: 13px; cursor: pointer;
+}
+button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+button.danger { background: transparent; border: 1px solid #c14040; color: #e05555; }
+button + button { margin-left: 6px; }
+.muted { color: var(--muted); font-size: 12px; margin-left: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; }
+.status { padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+.status-created, .status-session-running { background: rgba(91,140,255,.15); color: var(--accent); }
+.status-committed-pending-push { background: rgba(232,179,57,.15); color: var(--warn); }
+.status-pr-created { background: rgba(62,207,142,.15); color: var(--ok); }
+.status-no-changes, .status-session-exited { background: rgba(154,162,177,.15); color: var(--muted); }
