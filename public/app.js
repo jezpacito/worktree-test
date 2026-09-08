@@ -112,6 +112,19 @@ function fmtUsd(n) {
   return '~$' + n.toFixed(2);
 }
 
+// The port cell is a link to the running dev server. It stays clickable when the
+// worktree is idle -- the port is still that worktree's, you just have to Start
+// it first -- but is styled and labelled so you can tell the difference.
+function portCell(w) {
+  if (w.port == null) return '--';
+  const url = `http://localhost:${w.port}`;
+  const running = w.status === 'session-running' || w.status === 'dev-running';
+  const title = running
+    ? `Open ${url} in a new tab`
+    : `Open ${url} in a new tab. The dev server is not running -- click Start first.`;
+  return `<a class="port-link${running ? ' live' : ''}" href="${url}" target="_blank" rel="noopener noreferrer" title="${title}">${w.port}</a>`;
+}
+
 const TIP = {
   start: "Opens a terminal running the dev server on this worktree's port (plus Claude if ticked).",
   claude: 'Also run the Claude CLI in that terminal, and auto-commit when you exit it.',
@@ -193,7 +206,7 @@ function render() {
     tr.innerHTML = `
       <td>${w.branch || '(unknown)'} ${src}</td>
       <td class="path" title="${w.path}">${w.path}</td>
-      <td>${w.port ?? '--'}</td>
+      <td>${portCell(w)}</td>
       <td><span class="status status-${w.status}">${w.status}</span></td>
       <td><button class="link" data-action="toggle-cost" data-id="${w.id}">${costLabel}</button></td>
       <td>${fmtTokens(u.total)}</td>

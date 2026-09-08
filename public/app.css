@@ -92,3 +92,13 @@ table.mini th, table.mini td { padding: 4px 6px; }
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   word-break: break-all;
 }
+
+.port-link {
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border);
+}
+.port-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.port-link.live { color: var(--ok); border-bottom-color: rgba(62,207,142,.5); }
+.port-link.live:hover { color: var(--ok); border-bottom-color: var(--ok); }

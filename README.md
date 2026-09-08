@@ -28,6 +28,9 @@ project's own config files and without needing admin rights on Windows.
 - **Copies and patches `.env.development`** into the new worktree (into the
   app subfolder, if you set one), setting your port env var (e.g. `PORT`) to
   the port assigned to that worktree.
+- **Port numbers are links.** Click a worktree's port in the table to open
+  `http://localhost:<port>` in a new tab. The link turns green while that
+  worktree's dev server is actually running.
 - **Opens a terminal or VS Code at any worktree.** Every row has a
   **Terminal** button (Windows Terminal if installed, otherwise PowerShell)
   that drops you into that worktree's app folder with the port env var already
