@@ -148,6 +148,7 @@ function createApp() {
       const record = {
         id, branch, path: worktreePath, port,
         baseRef: baseRef || 'HEAD',
+        claudeSessionId: crypto.randomUUID(),
         status: 'created',
         tracked: true,
         adopted: true,
@@ -167,7 +168,11 @@ function createApp() {
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
-        claudeArgs,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: record.claudeSessionId,
+          hasTranscript: usage.transcriptExists(worktreePath, record.claudeSessionId),
+          extra: claudeArgs
+        }),
         withClaude: wantClaude
       });
 
@@ -215,6 +220,9 @@ function createApp() {
         });
         w.adopted = true;
       }
+      // Worktrees created before this existed -- and discovered ones -- get an
+      // id on their first Claude launch from here.
+      if (wantClaude && !w.claudeSessionId) w.claudeSessionId = crypto.randomUUID();
       w.tracked = true;
       state.save(s);
 
@@ -226,7 +234,11 @@ function createApp() {
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
-        claudeArgs: req.body.claudeArgs,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: w.claudeSessionId,
+          hasTranscript: usage.transcriptExists(w.path, w.claudeSessionId),
+          extra: req.body.claudeArgs
+        }),
         withClaude: wantClaude
       });
 
@@ -238,6 +250,17 @@ function createApp() {
     } catch (e) {
       res.status(500).json({ error: e.message, detail: e.stderr || e.stdout || null });
     }
+  });
+
+  // Drop this worktree's Claude session id so the next Start begins a fresh
+  // conversation. The old transcript is left alone -- its cost still counts.
+  app.post('/api/worktrees/:id/new-session', (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    w.claudeSessionId = crypto.randomUUID();
+    state.save(s);
+    res.json({ claudeSessionId: w.claudeSessionId });
   });
 
   // "I closed that terminal myself" -- reset a running record to idle.

@@ -28,6 +28,16 @@ project's own config files and without needing admin rights on Windows.
 - **Copies and patches `.env.development`** into the new worktree (into the
   app subfolder, if you set one), setting your port env var (e.g. `PORT`) to
   the port assigned to that worktree.
+- **Resumes each worktree's Claude conversation.** Every worktree is assigned
+  a Claude session id when it is created. The first launch names the session
+  (`claude --session-id <uuid>`); every later **Start** reopens it
+  (`claude --resume <uuid>`), so you pick up where you left off instead of
+  re-explaining the task. Which of the two is used is decided by whether that
+  session's transcript is actually on disk -- a session you opened and closed
+  without saying anything is never written, and resuming it would fail. The
+  row shows the first eight characters of the id, and **Start a fresh Claude
+  session** in the row menu rotates it when you want a clean slate (the old
+  transcript is kept, so its cost still counts).
 - **Port numbers are links.** Click a worktree's port in the table to open
   `http://localhost:<port>` in a new tab. The link is dimmed on a worktree the
   dashboard has not launched, but stays clickable -- that port belongs to that
@@ -160,6 +170,7 @@ Every other per-row action lives in that same **⋯** menu:
 | **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
 | **Commit now** | Commits everything in that worktree. Never pushes. |
 | **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |
+| **Start a fresh Claude session** | Rotates the stored session id, so the next **Start** begins a new conversation rather than resuming. |
 | **Remove worktree** | Deletes the folder. The branch and its commits are kept. |
 
 **Start** and **Mark idle** stay outside the menu as the row's primary button.

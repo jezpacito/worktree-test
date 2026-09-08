@@ -253,3 +253,54 @@ test('buildTerminalScript: opens at the appDir with the port env var preset', ()
   assert.doesNotMatch(script, /Start-Job/);
   assert.doesNotMatch(script, /Invoke-RestMethod/);
 });
+
+// ---- claude session resume -----------------------------------------------
+
+test('claudeArgsFor: starts a named session when no transcript exists yet', () => {
+  const args = session.claudeArgsFor({
+    claudeSessionId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    hasTranscript: false
+  });
+  assert.strictEqual(args, '--session-id aaaaaaaa-0000-4000-8000-000000000001');
+});
+
+test('claudeArgsFor: resumes that session once its transcript exists', () => {
+  const args = session.claudeArgsFor({
+    claudeSessionId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    hasTranscript: true
+  });
+  assert.strictEqual(args, '--resume aaaaaaaa-0000-4000-8000-000000000001');
+});
+
+test('claudeArgsFor: appends any extra args the caller passed', () => {
+  const args = session.claudeArgsFor({
+    claudeSessionId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    hasTranscript: true,
+    extra: '--model opus'
+  });
+  assert.strictEqual(args, '--resume aaaaaaaa-0000-4000-8000-000000000001 --model opus');
+});
+
+test('claudeArgsFor: falls back to plain claude when there is no session id', () => {
+  assert.strictEqual(session.claudeArgsFor({ extra: '--model opus' }), '--model opus');
+  assert.strictEqual(session.claudeArgsFor({}), '');
+});
+
+test('claudeArgsFor: rejects a session id that is not a plain UUID', () => {
+  assert.throws(
+    () => session.claudeArgsFor({ claudeSessionId: 'x; rm -rf /', hasTranscript: false }),
+    /uuid/i
+  );
+});
+
+test('transcriptExists: true only when that session id has a .jsonl on disk', () => {
+  const projects = tmpdir('wtd-projects-');
+  const worktree = '/somewhere/wt-feature-x';
+  const dir = path.join(projects, '-somewhere-wt-feature-x');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+
+  assert.strictEqual(usage.transcriptExists(worktree, id, projects), false);
+  fs.writeFileSync(path.join(dir, `${id}.jsonl`), '{}\n');
+  assert.strictEqual(usage.transcriptExists(worktree, id, projects), true);
+});

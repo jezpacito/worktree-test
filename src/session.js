@@ -27,6 +27,25 @@ function which(cmd) {
   });
 }
 
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// Build the argument string for the `claude` invocation. The dashboard assigns
+// each worktree a session id up front rather than scraping one out of the
+// transcripts afterwards: the first launch names the session with --session-id,
+// and every later launch reopens it with --resume. Which of the two applies is
+// decided by whether the transcript is actually on disk, because a session the
+// user opened and closed without saying anything never gets written, and
+// resuming it would fail.
+function claudeArgsFor({ claudeSessionId, hasTranscript, extra } = {}) {
+  const tail = (extra || '').trim();
+  if (!claudeSessionId) return tail;
+  if (!UUID_RE.test(claudeSessionId)) {
+    throw new Error(`Claude session id must be a UUID, got: ${claudeSessionId}`);
+  }
+  const flag = hasTranscript ? '--resume' : '--session-id';
+  return `${flag} ${claudeSessionId}${tail ? ' ' + tail : ''}`;
+}
+
 function q(p) {
   return String(p).replace(/"/g, '""');
 }
@@ -195,4 +214,4 @@ async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvV
   return { pid: child.pid, scriptPath };
 }
 
-module.exports = { launchSession, openTerminal, openInVsCode, buildPowerShellScript, buildTerminalScript };
+module.exports = { launchSession, openTerminal, openInVsCode, claudeArgsFor, buildPowerShellScript, buildTerminalScript };
