@@ -40,6 +40,11 @@ project's own config files and without needing admin rights on Windows.
   transcript is kept, so its cost still counts). **Open Claude session** in
   the same menu reopens that conversation on its own, without starting a dev
   server or changing the row's status.
+- **Runs from WSL too.** Started from a WSL distro, the dashboard opens a
+  Windows Terminal tab that re-enters that distro, so you get a real window
+  while the dev server and Claude stay Linux processes in the Linux
+  filesystem. On Windows it opens PowerShell as before. Everywhere else there
+  is no window to open, and the actions that need one are hidden.
 - **Port numbers are links.** Click a worktree's port in the table to open
   `http://localhost:<port>` in a new tab. The link is dimmed on a worktree the
   dashboard has not launched, but stays clickable -- that port belongs to that
@@ -104,8 +109,8 @@ launched; it never polls to check whether that terminal is still open or
 whether the port is answering. Close a terminal yourself and the row keeps
 saying "Dev server" until you hit **Mark idle** (or restart the dashboard,
 which downgrades leftover running rows). The UI only offers actions this
-machine can perform -- **Open terminal** is hidden off Windows, since that is
-the only platform it is implemented for.
+machine can perform -- **Open terminal** and **Open Claude session** need a
+window to open, so they appear on Windows and WSL and are hidden elsewhere.
 
 ## Requirements
 
@@ -168,8 +173,8 @@ Every other per-row action lives in that same **⋯** menu:
 | Action | What it does |
 | --- | --- |
 | **Run Claude on start** | Untick before hitting **Start** to get the dev server on its own. |
-| **Open Claude session** | Just the Claude conversation for that worktree, resumed. No dev server, no port taken, nothing committed when you exit, and the row's status is untouched -- for checking back on a session without starting anything. Windows only. |
-| **Open terminal** | A shell in that worktree's app folder with the port env var already exported. Windows only -- the menu hides it elsewhere. |
+| **Open Claude session** | Just the Claude conversation for that worktree, resumed. No dev server, no port taken, nothing committed when you exit, and the row's status is untouched -- for checking back on a session without starting anything. |
+| **Open terminal** | A shell in that worktree's app folder with the port env var already exported. |
 | **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
 | **Commit now** | Commits everything in that worktree. Never pushes. |
 | **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |

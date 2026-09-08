@@ -12,9 +12,10 @@ const usage = require('./usage');
 const { reconcile } = require('./reconcile');
 
 // What this machine can actually do, so the UI only offers real actions.
-// Opening a terminal is implemented for Windows Terminal / PowerShell only.
+// Windows opens PowerShell; WSL opens a Windows Terminal tab back into the
+// distro. A plain Linux or macOS box has no window to open.
 function capabilities() {
-  return { openTerminal: process.platform === 'win32' };
+  return { openTerminal: session.launcherKind() !== 'posix' };
 }
 
 function createApp() {

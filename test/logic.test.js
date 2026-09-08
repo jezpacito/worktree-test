@@ -317,3 +317,68 @@ test('buildClaudeScript: resumes claude at the worktree root, with no dev server
   assert.doesNotMatch(script, /Invoke-RestMethod/);
   assert.doesNotMatch(script, /npm run dev/);
 });
+
+// ---- WSL launcher --------------------------------------------------------
+
+test('launcherKind: windows, wsl and plain linux are told apart', () => {
+  assert.strictEqual(session.launcherKind({ platform: 'win32', release: '10.0.22631' }), 'win32');
+  assert.strictEqual(session.launcherKind({ platform: 'linux', release: '6.6.87.2-microsoft-standard-WSL2' }), 'wsl');
+  assert.strictEqual(session.launcherKind({ platform: 'linux', release: '6.8.0-generic' }), 'posix');
+  assert.strictEqual(session.launcherKind({ platform: 'darwin', release: '23.5.0' }), 'posix');
+});
+
+test('buildBashClaudeScript: resumes claude at the worktree root, nothing else', () => {
+  const s = session.buildBashClaudeScript({
+    worktreePath: '/home/j/wt/feature',
+    claudeArgs: '--resume aaaaaaaa-0000-4000-8000-000000000001'
+  });
+  assert.match(s, /cd "\/home\/j\/wt\/feature"/);
+  assert.match(s, /claude --resume aaaaaaaa-0000-4000-8000-000000000001/);
+  assert.doesNotMatch(s, /npm run dev/);
+  assert.doesNotMatch(s, /curl/);
+});
+
+test('buildBashTerminalScript: lands in the app folder with the port exported', () => {
+  const s = session.buildBashTerminalScript({
+    worktreePath: '/home/j/wt/feature',
+    appPath: '/home/j/wt/feature/src/renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev'
+  });
+  assert.match(s, /cd "\/home\/j\/wt\/feature\/src\/renderer"/);
+  assert.match(s, /export PORT="5005"/);
+  assert.doesNotMatch(s, /^npm run dev$/m);
+});
+
+test('buildBashSessionScript: dev server in the app folder, claude at the root', () => {
+  const s = session.buildBashSessionScript({
+    worktreePath: '/home/j/wt/feature',
+    appPath: '/home/j/wt/feature/src/renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc',
+    claudeArgs: '--resume aaaaaaaa-0000-4000-8000-000000000001',
+    withClaude: true
+  });
+  assert.match(s, /cd "\/home\/j\/wt\/feature\/src\/renderer"[\s\S]*npm run dev/);
+  assert.match(s, /cd "\/home\/j\/wt\/feature"/);
+  assert.match(s, /claude --resume aaaaaaaa-0000-4000-8000-000000000001/);
+  assert.match(s, /worktrees\/abc\/session\/exit/);
+  assert.match(s, /kill /);
+});
+
+test('buildBashSessionScript: dev-only mode runs no claude and never calls back', () => {
+  const s = session.buildBashSessionScript({
+    worktreePath: '/home/j/wt/feature',
+    appPath: '/home/j/wt/feature/src/renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', withClaude: false
+  });
+  assert.match(s, /npm run dev/);
+  assert.doesNotMatch(s, /\bclaude\b/);
+  assert.doesNotMatch(s, /curl/);
+});
+
+test('wslWindowArgs: opens a Windows Terminal tab back into the distro', () => {
+  const args = session.wslWindowArgs({ scriptPath: '/tmp/s.sh', title: 'wt:abc', distro: 'Ubuntu-24.04', hasWindowsTerminal: true });
+  assert.deepStrictEqual(args.slice(0, 6), ['new-tab', '--title', 'wt:abc', 'wsl.exe', '-d', 'Ubuntu-24.04']);
+  assert.ok(args.join(' ').includes('/tmp/s.sh'));
+});
