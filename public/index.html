@@ -2,85 +2,175 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Worktree Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-  <header>
-    <h1>Worktree Dashboard</h1>
-    <div class="pills">
-      <span id="totalCost" class="pill">Total est. cost: --</span>
-      <span id="totalUsage" class="pill">Total tokens: --</span>
-    </div>
-  </header>
+<div class="page">
+  <div class="window">
 
-  <section id="settingsPanel" class="card">
-    <h2>Project settings</h2>
-    <div class="grid">
-      <label>Project path (repo root)
-        <input id="cfgRepoPath" placeholder="C:\Users\ana\code\my-app" />
-      </label>
-      <label>Dev command
-        <input id="cfgDevCommand" placeholder="npm run dev" />
-      </label>
-      <label>Port env var
-        <input id="cfgPortEnvVar" placeholder="PORT" />
-      </label>
-      <label>Env file name
-        <input id="cfgEnvFile" placeholder=".env.development" />
-      </label>
-      <label>Start port
-        <input id="cfgStartPort" type="number" placeholder="5002" />
-      </label>
-      <label>Worktrees folder (optional)
-        <input id="cfgWorktreesRoot" placeholder="sibling .worktrees folder by default" />
-      </label>
-      <label>Cost alert threshold ($)
-        <input id="cfgCostThreshold" type="number" placeholder="20" />
-      </label>
-    </div>
-    <label>Model pricing ($ per 1M tokens) &mdash; JSON
-      <textarea id="cfgPricing" rows="7" spellcheck="false"
-        placeholder='{ "claude-sonnet-5": { "input": 2, "output": 10, "cacheWrite": 2.5, "cacheRead": 0.2 } }'></textarea>
-    </label>
-    <button id="saveConfig">Save settings</button>
-    <span id="configStatus" class="muted"></span>
-  </section>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" />
+          </svg>
+        </span>
+        <div>
+          <div class="brand-name">Worktree Dashboard</div>
+          <div class="brand-sub" id="brandSub">localhost:4999</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="pill pill-cost" id="totalCost">Estimated cost &mdash;</span>
+        <span class="pill pill-tokens" id="totalUsage">Tokens &mdash;</span>
+        <button class="btn btn-ghost" id="toggleSettings" aria-expanded="false" aria-controls="settingsPanel">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          Settings
+        </button>
+      </div>
+    </header>
 
-  <section class="card">
-    <h2>New worktree session</h2>
-    <div class="grid">
-      <label>Branch name
-        <input id="newBranch" placeholder="feature/my-task" />
-      </label>
-      <label>Base ref (optional)
-        <input id="newBaseRef" placeholder="main" />
-      </label>
-    </div>
-    <label class="checkbox"><input type="checkbox" id="newWithClaude" checked /> Run Claude in this session</label>
-    <button id="createWorktree">Create worktree + launch session</button>
-    <span id="createStatus" class="muted"></span>
-  </section>
+    <div class="content">
 
-  <section class="card">
-    <h2>Worktrees</h2>
-    <div class="toolbar">
-      <input id="branchFilter" placeholder="Filter by branch..." />
-      <span class="spacer"></span>
-      <button class="secondary" id="pagePrev">Prev</button>
-      <span id="pageLabel" class="muted">Page 1 of 1</span>
-      <button class="secondary" id="pageNext">Next</button>
-    </div>
-    <table id="wtTable">
-      <thead>
-        <tr>
-          <th>Branch</th><th>Path</th><th>Port</th><th>Status</th><th>Cost</th><th>Tokens</th><th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="wtBody"></tbody>
-    </table>
-  </section>
+      <div class="kpis">
+        <div class="card kpi">
+          <div class="kpi-label">Worktrees</div>
+          <div class="kpi-value" id="kpiCount">&mdash;</div>
+          <div class="kpi-foot" id="kpiCountFoot">&nbsp;</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-label">Launched</div>
+          <div class="kpi-value" id="kpiRunning">&mdash;</div>
+          <div class="kpi-foot" id="kpiRunningFoot">&nbsp;</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-label">Estimated cost</div>
+          <div class="kpi-value" id="kpiCost">&mdash;</div>
+          <div class="kpi-foot" id="kpiCostFoot">&nbsp;</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-label">Tokens</div>
+          <div class="kpi-value" id="kpiTokens">&mdash;</div>
+          <div class="kpi-foot">read from local Claude transcripts</div>
+        </div>
+      </div>
 
-  <script src="app.js"></script>
+      <section class="card card-pad" id="settingsPanel" hidden>
+        <div class="settings-head">
+          <div>
+            <h2 class="card-title">Settings</h2>
+            <p class="card-sub">Kept in your home folder, never written into the project you point this at.</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <label class="field" title="The git root of your project. Worktrees are branched from here.">
+            <span>Project path (repo root)</span>
+            <input id="cfgRepoPath" placeholder="C:\Users\ana\code\my-app" />
+          </label>
+          <label class="field" title="Relative to the repo root. Leave blank if the dev command runs at the root. The dev command, the env file and node_modules all resolve inside this folder.">
+            <span>App subfolder (optional)</span>
+            <input id="cfgAppDir" placeholder="src/renderer" />
+          </label>
+          <label class="field" title="Run inside the app subfolder, in a terminal opened for each worktree.">
+            <span>Dev command</span>
+            <input id="cfgDevCommand" placeholder="npm run dev" />
+          </label>
+          <label class="field" title="The env var your dev server reads its port from. Each worktree gets its own port in this var.">
+            <span>Port env var</span>
+            <input id="cfgPortEnvVar" placeholder="PORT" />
+          </label>
+          <label class="field" title="Copied from the app subfolder of the main repo into each new worktree, with the port var patched to that worktree's port.">
+            <span>Env file name</span>
+            <input id="cfgEnvFile" placeholder=".env.development" />
+          </label>
+          <label class="field" title="Ports are handed out from here upwards, one per worktree, and reclaimed when a worktree is removed.">
+            <span>Start port</span>
+            <input id="cfgStartPort" type="number" placeholder="5002" />
+          </label>
+          <label class="field" title="Where worktree folders are created. Defaults to a .worktrees folder next to your repo.">
+            <span>Worktrees folder (optional)</span>
+            <input id="cfgWorktreesRoot" placeholder="sibling .worktrees folder by default" />
+          </label>
+          <label class="field" title="Per-worktree estimated spend above which an optimization tip appears in the cost breakdown.">
+            <span>Cost alert threshold ($)</span>
+            <input id="cfgCostThreshold" type="number" placeholder="20" />
+          </label>
+          <label class="field span-all">
+            <span>Model pricing, $ per 1M tokens (JSON)</span>
+            <textarea id="cfgPricing" rows="5" spellcheck="false"
+              placeholder='{ "claude-sonnet-5": { "input": 2, "output": 10, "cacheWrite": 2.5, "cacheRead": 0.2 } }'></textarea>
+          </label>
+          <p class="resolved span-all" id="appDirHint"></p>
+        </div>
+        <div class="settings-foot">
+          <span class="form-note" id="configStatus"></span>
+          <button class="btn btn-dark" id="saveConfig">Save settings</button>
+        </div>
+      </section>
+
+      <section class="card card-pad">
+        <h2 class="card-title">New worktree session</h2>
+        <p class="card-sub">Creates the worktree, links node_modules, patches the env port, and opens a terminal.</p>
+        <div class="create-row" style="margin-top:16px">
+          <label class="field">
+            <span>Branch name</span>
+            <input id="newBranch" placeholder="feature/my-task" />
+          </label>
+          <label class="field narrow">
+            <span>Base ref (optional)</span>
+            <input id="newBaseRef" placeholder="main" />
+          </label>
+          <label class="checkbox" title="Ticked: the terminal runs the dev server in the background and Claude in the foreground, and auto-commits when you exit Claude. Unticked: dev server only.">
+            <input type="checkbox" id="newWithClaude" checked /> Run Claude in this session
+          </label>
+          <button class="btn btn-primary" id="createWorktree">Create worktree</button>
+        </div>
+        <p class="form-note" id="createStatus" style="margin:12px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <div class="table-head">
+          <div>
+            <h2 class="card-title">Worktrees</h2>
+            <p class="card-sub" id="resultsSummary">&nbsp;</p>
+          </div>
+          <div class="table-tools">
+            <div class="search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+              </svg>
+              <input id="branchFilter" placeholder="Filter by branch" aria-label="Filter by branch" />
+            </div>
+            <div class="pager">
+              <button class="btn btn-ghost btn-sm" id="pagePrev">Prev</button>
+              <span id="pageLabel">Page 1 of 1</span>
+              <button class="btn btn-ghost btn-sm" id="pageNext">Next</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <div class="row-grid col-head">
+            <div>Branch</div><div>Path</div><div>Port</div>
+            <div title="What the dashboard last recorded. Closing a terminal yourself does not update this — use Mark idle.">Status</div>
+            <div>Cost</div><div>Tokens</div><div class="align-end">Actions</div>
+          </div>
+          <div id="wtBody"></div>
+        </div>
+      </section>
+
+      <p class="footnote">Status reflects what the dashboard last launched, not a live process check. Config, ports and launcher scripts live in <code>~/.worktree-dashboard</code>.</p>
+
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>

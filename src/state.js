@@ -25,6 +25,9 @@ const DEFAULT_STATE = {
   // Run `wtd init` again (or use the UI) to point it at a different project.
   config: {
     repoPath: null,          // absolute path to the main checkout (git root)
+    appDir: '',              // repo-root-relative folder the app lives in (e.g. 'src/renderer');
+                             // blank means the app is at the repo root. The dev command,
+                             // the env file and node_modules all resolve inside it.
     devCommand: 'npm run dev', // command used to start the dev server
     portEnvVar: 'PORT',      // env var name the dev command reads for its port
     envFileName: '.env.development',

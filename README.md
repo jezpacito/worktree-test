@@ -12,14 +12,32 @@ project's own config files and without needing admin rights on Windows.
   that's inherent to how git worktrees work, not something this tool adds.
 - **Creates a worktree per task/branch**, in a sibling `.worktrees/` folder
   next to your repo (configurable).
+- **Works with apps in a subfolder.** If your `package.json`, `node_modules`
+  and `.env.development` live in something like `src/renderer` rather than at
+  the git root, set **App subfolder** in Settings to that relative path. The
+  dev command runs there, the env file is copied there, and `node_modules` is
+  junctioned there. Git operations (branch, commit, worktree add/remove) still
+  happen at the worktree root, which is where they belong. Leave it blank for
+  a plain single-package repo.
 - **Skips the `npm install` tax.** Each new worktree's `node_modules` is a
   Windows *directory junction* (`mklink /J`) pointing at your main repo's
   already-installed `node_modules`. Junctions, unlike symlinks, don't require
   admin rights or Developer Mode on Windows. If a branch changes dependencies,
   use "Reinstall deps" on that one worktree to swap the junction for a real
   `npm install`.
-- **Copies and patches `.env.development`** into the new worktree, setting
-  your port env var (e.g. `PORT`) to the port assigned to that worktree.
+- **Copies and patches `.env.development`** into the new worktree (into the
+  app subfolder, if you set one), setting your port env var (e.g. `PORT`) to
+  the port assigned to that worktree.
+- **Port numbers are links.** Click a worktree's port in the table to open
+  `http://localhost:<port>` in a new tab. The link is dimmed on a worktree the
+  dashboard has not launched, but stays clickable -- that port belongs to that
+  worktree either way.
+- **Opens a terminal or VS Code at any worktree**, from the row's menu.
+  **Open terminal** (Windows only -- Windows Terminal if installed, otherwise
+  PowerShell) drops you into that worktree's app folder with the port env var
+  already exported, so `npm run dev` just works. **Open in VS Code** opens the
+  worktree root in your editor. Neither is tracked as a session: closing the
+  terminal doesn't change the row's status.
 - **Allocates ports starting at 5002**, incrementing for each new worktree,
   and reclaims a port once you remove that worktree.
 - **Launches a real terminal per worktree** (Windows Terminal if installed,
@@ -56,6 +74,27 @@ project's own config files and without needing admin rights on Windows.
   Settings; an asterisk on a figure means an unknown model id was priced at
   the fallback rate. Treat the numbers as a rough signal, not a bill.
 
+## The interface
+
+Settings are collapsed behind a button in the top bar, so the page opens on
+what you actually came for: four counters (worktrees, how many were launched,
+estimated cost, tokens), the create form, and the worktree table. Each row
+carries its branch, a shortened path, a clickable port, a status pill, an
+expandable cost cell, and one primary button — **Start** when idle, **Mark
+idle** when running. Everything else (Open terminal, Open in VS Code, Push
+and create PR, Commit now, Reinstall deps, Remove) lives in the row's ⋯ menu.
+
+Expanding the cost cell breaks the spend into input, output, cache write and
+cache read tokens, alongside the optimization tips.
+
+**Status is a record, not a probe.** The dashboard stores what it last
+launched; it never polls to check whether that terminal is still open or
+whether the port is answering. Close a terminal yourself and the row keeps
+saying "Dev server" until you hit **Mark idle** (or restart the dashboard,
+which downgrades leftover running rows). The UI only offers actions this
+machine can perform -- **Open terminal** is hidden off Windows, since that is
+the only platform it is implemented for.
+
 ## Requirements
 
 - Node.js (no admin rights needed to run it once installed; if Node itself
@@ -86,7 +125,11 @@ browser (or a VS Code Simple Browser tab).
 
 In **Settings**, fill in:
 - **Project path** -- the root of your main repo checkout (where `.git` lives).
-- **Dev command** -- e.g. `npm run dev`.
+- **App subfolder** -- optional, relative to the project path. Set it to
+  `src/renderer` for a layout like `root-project/src/renderer`, i.e. wherever
+  the `package.json` with your `dev` script lives. Leave blank if that's the
+  repo root. A hint under the form shows the full path it resolves to.
+- **Dev command** -- e.g. `npm run dev`. Runs inside the app subfolder.
 - **Port env var** -- whatever your dev server reads for its port, e.g. `PORT`,
   `VITE_PORT`, `NEXT_PUBLIC_PORT`.
 - **Env file name** -- e.g. `.env.development`.
@@ -99,18 +142,29 @@ In **Settings**, fill in:
 
 Then, for each new task:
 1. Type a branch name (and optionally a base ref, default `HEAD`), leave
-   **Run Claude in this session** ticked, and click **Create worktree +
-   launch session**.
+   **Run Claude in this session** ticked, and click **Create worktree**.
 2. A terminal opens with your dev server running in the background and
    `claude` running in the foreground. Run your company skill / do your work
    as normal.
 3. Exit the Claude session when you're done. The dashboard auto-commits
-   locally and marks the worktree "committed, pending push".
-4. When you're happy, click **Push & create PR** in the dashboard -- this is
-   the only step that pushes anything or talks to GitHub.
+   locally and marks the worktree "Committed, not pushed".
+4. When you're happy, open the row's **⋯** menu and click **Push and create
+   PR** -- this is the only step that pushes anything or talks to GitHub.
 
-To start an existing worktree without Claude (just the dev server), find its
-row in the table, untick the per-row **Claude** checkbox, and click **Start**.
+Every other per-row action lives in that same **⋯** menu:
+
+| Action | What it does |
+| --- | --- |
+| **Run Claude on start** | Untick before hitting **Start** to get the dev server on its own. |
+| **Open terminal** | A shell in that worktree's app folder with the port env var already exported. Windows only -- the menu hides it elsewhere. |
+| **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
+| **Commit now** | Commits everything in that worktree. Never pushes. |
+| **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |
+| **Remove worktree** | Deletes the folder. The branch and its commits are kept. |
+
+**Start** and **Mark idle** stay outside the menu as the row's primary button.
+**Mark idle** only resets the record and frees the port -- it does not stop a
+process, so use it after you have closed the terminal yourself.
 
 ## Running the tests
 
@@ -118,15 +172,18 @@ row in the table, untick the per-row **Claude** checkbox, and click **Start**.
 npm test
 ```
 
-Covers the pure logic only (worktree-list parsing, cost/pricing math,
-optimization-tip rules, state reconciliation). The terminal-spawning paths
-aren't automated.
+Covers the pure logic only: worktree-list parsing, cost and pricing math,
+optimization-tip rules, state reconciliation, app-subfolder path resolution,
+the env-file copy and patch, and the generated launcher scripts. The parts
+that actually spawn a terminal or a browser are not automated -- neither is
+the front end, which has no DOM test harness.
 
 ## Where state lives
 
 Everything the dashboard tracks (config, worktree list, port assignments,
-generated launcher scripts) lives under `%USERPROFILE%\.worktree-dashboard\`,
-entirely outside your project repo.
+generated launcher scripts) lives under `%USERPROFILE%\.worktree-dashboard\`
+on Windows, `~/.worktree-dashboard/` elsewhere -- entirely outside your
+project repo.
 
 ## Usage & cost monitoring caveat
 
@@ -149,3 +206,16 @@ both as a rough signal, not a billing source of truth.
   re-auth `gh` occasionally outside this tool.
 - If your dev command needs more than one env var patched (not just the
   port), extend `copyAndPatchEnvFile` in `src/worktrees.js`.
+- Only one **App subfolder** is supported. A repo with several independently
+  runnable packages needs one dashboard config per package, or a change to
+  make `appDir` a per-worktree field.
+- Worktrees created *before* you set **App subfolder** have their env file at
+  the old location. The env file is only written on first adoption, so fix
+  those by hand or remove and recreate the worktree.
+- Nothing polls a running session. A row keeps its launched status until you
+  hit **Mark idle** or restart the dashboard. Making this self-correcting
+  would mean probing each port on every refresh -- a deliberate omission, not
+  an oversight.
+- Changing settings that the server reads at startup needs a restart. The
+  page is served from disk on every request, so the form can show a field the
+  running process does not yet understand.
