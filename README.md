@@ -142,24 +142,29 @@ In **Settings**, fill in:
 
 Then, for each new task:
 1. Type a branch name (and optionally a base ref, default `HEAD`), leave
-   **Run Claude in this session** ticked, and click **Create worktree +
-   launch session**.
+   **Run Claude in this session** ticked, and click **Create worktree**.
 2. A terminal opens with your dev server running in the background and
    `claude` running in the foreground. Run your company skill / do your work
    as normal.
 3. Exit the Claude session when you're done. The dashboard auto-commits
-   locally and marks the worktree "committed, pending push".
-4. When you're happy, click **Push & create PR** in the dashboard -- this is
-   the only step that pushes anything or talks to GitHub.
+   locally and marks the worktree "Committed, not pushed".
+4. When you're happy, open the row's **⋯** menu and click **Push and create
+   PR** -- this is the only step that pushes anything or talks to GitHub.
 
-To start an existing worktree without Claude (just the dev server), find its
-row in the table, untick the per-row **Claude** checkbox, and click **Start**.
+Every other per-row action lives in that same **⋯** menu:
 
-To run things by hand instead, click **Terminal** on that row -- you land in
-the worktree's app folder with the port already set -- or **VS Code** to open
-the worktree in your editor. **Terminal** and **VS Code** are Windows-only and
-Windows/macOS/Linux respectively; **VS Code** needs the `code` CLI on your
-PATH (in VS Code: *Shell Command: Install 'code' command in PATH*).
+| Action | What it does |
+| --- | --- |
+| **Run Claude on start** | Untick before hitting **Start** to get the dev server on its own. |
+| **Open terminal** | A shell in that worktree's app folder with the port env var already exported. Windows only -- the menu hides it elsewhere. |
+| **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
+| **Commit now** | Commits everything in that worktree. Never pushes. |
+| **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |
+| **Remove worktree** | Deletes the folder. The branch and its commits are kept. |
+
+**Start** and **Mark idle** stay outside the menu as the row's primary button.
+**Mark idle** only resets the record and frees the port -- it does not stop a
+process, so use it after you have closed the terminal yourself.
 
 ## Running the tests
 
@@ -167,15 +172,18 @@ PATH (in VS Code: *Shell Command: Install 'code' command in PATH*).
 npm test
 ```
 
-Covers the pure logic only (worktree-list parsing, cost/pricing math,
-optimization-tip rules, state reconciliation). The terminal-spawning paths
-aren't automated.
+Covers the pure logic only: worktree-list parsing, cost and pricing math,
+optimization-tip rules, state reconciliation, app-subfolder path resolution,
+the env-file copy and patch, and the generated launcher scripts. The parts
+that actually spawn a terminal or a browser are not automated -- neither is
+the front end, which has no DOM test harness.
 
 ## Where state lives
 
 Everything the dashboard tracks (config, worktree list, port assignments,
-generated launcher scripts) lives under `%USERPROFILE%\.worktree-dashboard\`,
-entirely outside your project repo.
+generated launcher scripts) lives under `%USERPROFILE%\.worktree-dashboard\`
+on Windows, `~/.worktree-dashboard/` elsewhere -- entirely outside your
+project repo.
 
 ## Usage & cost monitoring caveat
 
@@ -204,3 +212,10 @@ both as a rough signal, not a billing source of truth.
 - Worktrees created *before* you set **App subfolder** have their env file at
   the old location. The env file is only written on first adoption, so fix
   those by hand or remove and recreate the worktree.
+- Nothing polls a running session. A row keeps its launched status until you
+  hit **Mark idle** or restart the dashboard. Making this self-correcting
+  would mean probing each port on every refresh -- a deliberate omission, not
+  an oversight.
+- Changing settings that the server reads at startup needs a restart. The
+  page is served from disk on every request, so the form can show a field the
+  running process does not yet understand.
