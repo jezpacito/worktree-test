@@ -73,6 +73,19 @@ project's own config files and without needing admin rights on Windows.
   Settings; an asterisk on a figure means an unknown model id was priced at
   the fallback rate. Treat the numbers as a rough signal, not a bill.
 
+## The interface
+
+Settings are collapsed behind a button in the top bar, so the page opens on
+what you actually came for: four counters (worktrees, how many are running,
+estimated cost, tokens), the create form, and the worktree table. Each row
+carries its branch, a shortened path, a clickable port, a status pill, an
+expandable cost cell, and one primary button — **Start** when idle, **Mark
+idle** when running. Everything else (Open terminal, Open in VS Code, Push
+and create PR, Commit now, Reinstall deps, Remove) lives in the row's ⋯ menu.
+
+Expanding the cost cell breaks the spend into input, output, cache write and
+cache read tokens, alongside the optimization tips.
+
 ## Requirements
 
 - Node.js (no admin rights needed to run it once installed; if Node itself

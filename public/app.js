@@ -1,306 +1,430 @@
 async function api(path, opts) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  });
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 }
 
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // ---- config --------------------------------------------------------------
 
+let config = {};
+
 async function loadConfig() {
-  const cfg = await api('/api/config');
-  document.getElementById('cfgRepoPath').value = cfg.repoPath || '';
-  document.getElementById('cfgAppDir').value = cfg.appDir || '';
-  document.getElementById('cfgDevCommand').value = cfg.devCommand || '';
-  document.getElementById('cfgPortEnvVar').value = cfg.portEnvVar || '';
-  document.getElementById('cfgEnvFile').value = cfg.envFileName || '';
-  document.getElementById('cfgStartPort').value = cfg.startPort || '';
-  document.getElementById('cfgWorktreesRoot').value = cfg.worktreesRoot || '';
-  document.getElementById('cfgCostThreshold').value = cfg.costThreshold ?? '';
-  document.getElementById('cfgPricing').value = JSON.stringify(cfg.pricing || {}, null, 2);
+  config = await api('/api/config');
+  $('cfgRepoPath').value = config.repoPath || '';
+  $('cfgAppDir').value = config.appDir || '';
+  $('cfgDevCommand').value = config.devCommand || '';
+  $('cfgPortEnvVar').value = config.portEnvVar || '';
+  $('cfgEnvFile').value = config.envFileName || '';
+  $('cfgStartPort').value = config.startPort || '';
+  $('cfgWorktreesRoot').value = config.worktreesRoot || '';
+  $('cfgCostThreshold').value = config.costThreshold ?? '';
+  $('cfgPricing').value = JSON.stringify(config.pricing || {}, null, 2);
   renderAppDirHint();
+  renderBrandSub();
+}
+
+function renderBrandSub() {
+  const repo = config.repoPath || '';
+  const name = repo ? repo.split(/[\\/]/).filter(Boolean).pop() : 'no project set';
+  $('brandSub').textContent = `localhost:${config.dashboardPort || 4999} · ${name}`;
 }
 
 // Echo where the dev command will actually run, so a wrong subfolder is
 // obvious before any worktree gets created.
 function renderAppDirHint() {
-  const repo = document.getElementById('cfgRepoPath').value.trim();
-  const appDir = document.getElementById('cfgAppDir').value.trim().replace(/^[\\/]+|[\\/]+$/g, '');
-  const hint = document.getElementById('appDirHint');
-  if (!repo) { hint.textContent = ''; return; }
+  const repo = $('cfgRepoPath').value.trim();
+  const appDir = $('cfgAppDir').value.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+  const hint = $('appDirHint');
+  if (!repo) { hint.innerHTML = ''; return; }
   const sep = repo.includes('\\') ? '\\' : '/';
-  const wtRoot = repo.split(/[\\/]/).slice(0, -1).join(sep) + sep + '.worktrees' + sep + 'wt-<branch>';
-  const target = appDir ? wtRoot + sep + appDir.replace(/\//g, sep) : wtRoot;
-  hint.textContent = `Dev command and env file will resolve to: ${target}`;
+  const root = $('cfgWorktreesRoot').value.trim()
+    || repo.split(/[\\/]/).slice(0, -1).join(sep) + sep + '.worktrees';
+  const target = root + sep + 'wt-<branch>' + (appDir ? sep + appDir.replace(/\//g, sep) : '');
+  hint.innerHTML = `Dev command and env file resolve to <code>${esc(target)}</code>`;
 }
 
-document.getElementById('cfgAppDir').addEventListener('input', renderAppDirHint);
-document.getElementById('cfgRepoPath').addEventListener('input', renderAppDirHint);
+['cfgAppDir', 'cfgRepoPath', 'cfgWorktreesRoot'].forEach((id) =>
+  $(id).addEventListener('input', renderAppDirHint));
 
-document.getElementById('saveConfig').addEventListener('click', async () => {
-  const status = document.getElementById('configStatus');
-  status.textContent = 'Saving...';
+$('toggleSettings').addEventListener('click', () => {
+  const panel = $('settingsPanel');
+  const open = panel.hidden;
+  panel.hidden = !open;
+  $('toggleSettings').setAttribute('aria-expanded', String(open));
+  if (open) $('cfgRepoPath').focus();
+});
+
+$('saveConfig').addEventListener('click', async () => {
+  const status = $('configStatus');
+  status.className = 'form-note';
+  status.textContent = 'Saving…';
   try {
     await api('/api/config', {
       method: 'POST',
       body: JSON.stringify({
-        repoPath: document.getElementById('cfgRepoPath').value.trim(),
-        appDir: document.getElementById('cfgAppDir').value.trim(),
-        devCommand: document.getElementById('cfgDevCommand').value.trim(),
-        portEnvVar: document.getElementById('cfgPortEnvVar').value.trim(),
-        envFileName: document.getElementById('cfgEnvFile').value.trim(),
-        startPort: document.getElementById('cfgStartPort').value.trim(),
-        worktreesRoot: document.getElementById('cfgWorktreesRoot').value.trim(),
-        costThreshold: document.getElementById('cfgCostThreshold').value.trim(),
-        pricing: document.getElementById('cfgPricing').value.trim()
+        repoPath: $('cfgRepoPath').value.trim(),
+        appDir: $('cfgAppDir').value.trim(),
+        devCommand: $('cfgDevCommand').value.trim(),
+        portEnvVar: $('cfgPortEnvVar').value.trim(),
+        envFileName: $('cfgEnvFile').value.trim(),
+        startPort: $('cfgStartPort').value.trim(),
+        worktreesRoot: $('cfgWorktreesRoot').value.trim(),
+        costThreshold: $('cfgCostThreshold').value.trim(),
+        pricing: $('cfgPricing').value.trim()
       })
     });
-    status.textContent = 'Saved.';
+    status.className = 'form-note ok';
+    status.textContent = 'Settings saved';
+    setTimeout(() => { status.textContent = ''; }, 2000);
     await loadConfig();
-  } catch (e) {
-    status.textContent = 'Error: ' + e.message;
-  }
-});
-
-document.getElementById('createWorktree').addEventListener('click', async () => {
-  const status = document.getElementById('createStatus');
-  const branch = document.getElementById('newBranch').value.trim();
-  const baseRef = document.getElementById('newBaseRef').value.trim();
-  const withClaude = document.getElementById('newWithClaude').checked;
-  if (!branch) { status.textContent = 'Branch name required.'; return; }
-  status.textContent = withClaude ? 'Creating worktree and launching session...' : 'Creating worktree and starting dev server...';
-  try {
-    const w = await api('/api/worktrees', { method: 'POST', body: JSON.stringify({ branch, baseRef, withClaude }) });
-    status.textContent = `Launched on port ${w.port}.`;
-    document.getElementById('newBranch').value = '';
     await refresh();
   } catch (e) {
-    status.textContent = 'Error: ' + e.message;
+    status.className = 'form-note error';
+    status.textContent = e.message;
   }
 });
 
-// ---- worktree table ----------------------------------------------------
+$('createWorktree').addEventListener('click', async () => {
+  const status = $('createStatus');
+  const btn = $('createWorktree');
+  const branch = $('newBranch').value.trim();
+  const baseRef = $('newBaseRef').value.trim();
+  const withClaude = $('newWithClaude').checked;
+  status.className = 'form-note';
+  if (!branch) {
+    status.className = 'form-note error';
+    status.textContent = 'Enter a branch name first.';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Creating the worktree and opening a terminal…';
+  try {
+    const w = await api('/api/worktrees', { method: 'POST', body: JSON.stringify({ branch, baseRef, withClaude }) });
+    status.className = 'form-note ok';
+    status.textContent = `${w.branch} is running on port ${w.port}.`;
+    $('newBranch').value = '';
+    $('newBaseRef').value = '';
+    await refresh();
+  } catch (e) {
+    status.className = 'form-note error';
+    status.textContent = e.message;
+  }
+  btn.disabled = false;
+});
+
+// ---- status tones --------------------------------------------------------
+
+const TONES = {
+  'session-running':        { tone: 'running', label: 'Claude + dev server' },
+  'dev-running':            { tone: 'running', label: 'Dev server' },
+  'created':                { tone: 'running', label: 'Starting' },
+  'idle':                   { tone: 'idle',    label: 'Idle' },
+  'session-exited':         { tone: 'idle',    label: 'Session ended' },
+  'no-changes':             { tone: 'idle',    label: 'No changes' },
+  'committed-pending-push': { tone: 'pending', label: 'Committed, not pushed' },
+  'pr-created':             { tone: 'done',    label: 'PR created' },
+  'discovered':             { tone: 'found',   label: 'Discovered' },
+  'missing':                { tone: 'gone',    label: 'Folder missing' }
+};
+const toneFor = (s) => TONES[s] || { tone: 'idle', label: s };
+const isRunning = (s) => s === 'session-running' || s === 'dev-running' || s === 'created';
+
+// ---- table ---------------------------------------------------------------
 
 let allWorktrees = [];
 let filterText = '';
 let page = 0;
 const PAGE_SIZE = 10;
 const expanded = new Set();
+let openMenu = null;
 
-const branchFilter = document.getElementById('branchFilter');
-branchFilter.addEventListener('input', () => {
-  filterText = branchFilter.value.trim().toLowerCase();
+$('branchFilter').addEventListener('input', (e) => {
+  filterText = e.target.value.trim().toLowerCase();
   page = 0;
   render();
 });
-document.getElementById('pagePrev').addEventListener('click', () => { if (page > 0) { page--; render(); } });
-document.getElementById('pageNext').addEventListener('click', () => { page++; render(); });
+$('pagePrev').addEventListener('click', () => { if (page > 0) { page--; render(); } });
+$('pageNext').addEventListener('click', () => { page++; render(); });
 
 function fmtTokens(n) {
-  if (n == null) return '--';
-  if (n > 1000000) return (n / 1000000).toFixed(2) + 'M';
-  if (n > 1000) return (n / 1000).toFixed(1) + 'k';
+  if (n == null) return '—';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
   return String(n);
 }
-
 function fmtUsd(n) {
-  if (n == null || Number.isNaN(n)) return '--';
-  if (n > 0 && n < 0.01) return '~<$0.01';
-  return '~$' + n.toFixed(2);
+  if (n == null || Number.isNaN(n)) return '—';
+  if (n > 0 && n < 0.01) return '<$0.01';
+  return '$' + n.toFixed(2);
 }
+const fmtInt = (n) => (n == null ? '—' : n.toLocaleString('en-US'));
 
-// The port cell is a link to the running dev server. It stays clickable when the
-// worktree is idle -- the port is still that worktree's, you just have to Start
-// it first -- but is styled and labelled so you can tell the difference.
-function portCell(w) {
-  if (w.port == null) return '--';
-  const url = `http://localhost:${w.port}`;
-  const running = w.status === 'session-running' || w.status === 'dev-running';
-  const title = running
-    ? `Open ${url} in a new tab`
-    : `Open ${url} in a new tab. The dev server is not running -- click Start first.`;
-  return `<a class="port-link${running ? ' live' : ''}" href="${url}" target="_blank" rel="noopener noreferrer" title="${title}">${w.port}</a>`;
-}
-
-const TIP = {
-  start: "Opens a terminal running the dev server on this worktree's port (plus Claude if ticked).",
-  claude: 'Also run the Claude CLI in that terminal, and auto-commit when you exit it.',
-  terminal: 'Opens PowerShell in this worktree\'s app folder with the port env var already set -- for running the dev command yourself.',
-  vscode: "Opens this worktree's root folder in VS Code.",
-  markIdle: 'You closed the terminal yourself -- reset this row to idle and free the port.',
-  push: 'Pushes this branch and opens a PR. Nothing is pushed without this.',
-  commit: 'Commit everything in this worktree now (never pushes).',
-  reinstall: 'Replaces the shared node_modules junction with a real npm install in this worktree.',
-  remove: 'Deletes the worktree folder. The branch and its commits are kept.'
-};
-
-function actionsFor(w) {
-  const a = [];
-  const running = w.status === 'session-running' || w.status === 'dev-running';
-  if (!running && w.status !== 'missing') {
-    a.push(
-      `<label class="inline-check" title="${TIP.claude}"><input type="checkbox" data-claude="${w.id}" checked> Claude</label>` +
-      `<button data-action="start" data-id="${w.id}" title="${TIP.start}">Start</button>`
-    );
+// Show the worktree folder relative to the worktrees root -- the shared prefix
+// is the same on every row and just pushes the useful part out of view.
+function shortPath(full) {
+  const roots = [config.worktreesRoot, config.repoPath].filter(Boolean);
+  for (const root of roots) {
+    const norm = (p) => p.replace(/[\\/]+$/, '');
+    if (full.length > norm(root).length && full.startsWith(norm(root))) {
+      return full.slice(norm(root).length).replace(/^[\\/]+/, '');
+    }
   }
-  if (running) {
-    a.push(`<button class="secondary" data-action="mark-idle" data-id="${w.id}" title="${TIP.markIdle}">Mark idle</button>`);
+  return full;
+}
+
+const CHEVRON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const KEBAB = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
+
+// The port cell links to the dev server. It stays clickable when idle -- the
+// port is still that worktree's -- but is dimmed so you can tell it is not up.
+function portCell(w) {
+  if (w.port == null) return '<span class="empty-cell">—</span>';
+  const url = `http://localhost:${w.port}`;
+  const live = isRunning(w.status);
+  const title = live ? `Open ${url}` : `Open ${url}. The dev server is not running — start it first.`;
+  return `<a class="port-link${live ? '' : ' dim'}" href="${url}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${w.port}</a>`;
+}
+
+function rowHtml(w) {
+  const t = toneFor(w.status);
+  const u = w.usage || {};
+  const open = expanded.has(w.id);
+  const from = w.baseRef ? `from ${esc(w.baseRef)}` : (w.tracked ? '' : 'found on disk');
+
+  const cost = u.available
+    ? `<button class="cost-toggle" data-action="toggle-cost" data-id="${w.id}" aria-expanded="${open}">
+         ${fmtUsd(u.usd)}${u.estimated ? '*' : ''} ${CHEVRON}</button>`
+    : '<span class="empty-cell">—</span>';
+
+  const primary = w.status === 'missing' ? ''
+    : isRunning(w.status)
+      ? `<button class="btn btn-ghost btn-sm" data-action="mark-idle" data-id="${w.id}" title="You closed that terminal yourself — resets this row to idle and frees the port. It does not stop a running process.">Mark idle</button>`
+      : `<button class="btn btn-primary btn-sm" data-action="start" data-id="${w.id}" title="Opens a terminal running the dev server on this worktree's port.">Start</button>`;
+
+  return `
+    <div class="row-grid">
+      <div>
+        <div class="cell-branch-name" title="${esc(w.branch || '')}">${esc(w.branch || '(unknown)')}</div>
+        ${from ? `<div class="cell-branch-from">${from}</div>` : ''}
+      </div>
+      <div class="cell-path" title="${esc(w.path)}">${esc(shortPath(w.path))}</div>
+      <div class="cell-port">${portCell(w)}</div>
+      <div><span class="status tone-${t.tone}"><span class="dot"></span>${esc(t.label)}</span></div>
+      <div>${cost}</div>
+      <div class="cell-tokens">${fmtTokens(u.total)}</div>
+      <div class="cell-actions">
+        ${primary}
+        <button class="btn-icon" data-action="menu" data-id="${w.id}" aria-expanded="${openMenu === w.id}" aria-label="More actions for ${esc(w.branch || 'this worktree')}">${KEBAB}</button>
+      </div>
+    </div>
+    ${open ? `<div class="detail" id="detail-${w.id}">Loading breakdown…</div>` : ''}`;
+}
+
+function menuHtml(w) {
+  const live = isRunning(w.status);
+  const items = [];
+  if (!live && w.status !== 'missing') {
+    items.push(`<label><input type="checkbox" data-claude="${w.id}" checked> Run Claude on start</label>`);
   }
   if (w.status !== 'missing') {
-    a.push(`<button class="secondary" data-action="terminal" data-id="${w.id}" title="${TIP.terminal}">Terminal</button>`);
-    a.push(`<button class="secondary" data-action="vscode" data-id="${w.id}" title="${TIP.vscode}">VS Code</button>`);
+    items.push(`<button data-action="terminal" data-id="${w.id}">Open terminal</button>`);
+    items.push(`<button data-action="vscode" data-id="${w.id}">Open in VS Code</button>`);
   }
   if (w.status === 'committed-pending-push') {
-    a.push(`<button data-action="push" data-id="${w.id}" title="${TIP.push}">Push &amp; create PR</button>`);
+    items.push(`<button class="accent" data-action="push" data-id="${w.id}">Push and create PR</button>`);
   }
   if (w.status === 'session-exited' || w.status === 'no-changes') {
-    a.push(`<button class="secondary" data-action="commit" data-id="${w.id}" title="${TIP.commit}">Commit now</button>`);
+    items.push(`<button data-action="commit" data-id="${w.id}">Commit now</button>`);
   }
   if (w.status !== 'missing') {
-    a.push(`<button class="secondary" data-action="reinstall" data-id="${w.id}" title="${TIP.reinstall}">Reinstall deps</button>`);
+    items.push(`<button data-action="reinstall" data-id="${w.id}">Reinstall deps</button>`);
   }
-  a.push(`<button class="danger" data-action="remove" data-id="${w.id}" title="${TIP.remove}">Remove</button>`);
-  if (w.prUrl) a.push(`<a href="${w.prUrl}" target="_blank">PR &#8599;</a>`);
-  return a.join(' ');
+  if (w.prUrl) items.push(`<button data-action="open-pr" data-id="${w.id}">View pull request</button>`);
+  items.push('<div class="sep"></div>');
+  items.push(`<button class="danger" data-action="remove" data-id="${w.id}">Remove worktree</button>`);
+  return items.join('');
+}
+
+function render() {
+  const body = $('wtBody');
+  const filtered = allWorktrees.filter((w) => (w.branch || '').toLowerCase().includes(filterText));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (page >= pageCount) page = pageCount - 1;
+  const rows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  $('pageLabel').textContent = `Page ${page + 1} of ${pageCount}`;
+  $('pagePrev').disabled = page === 0;
+  $('pageNext').disabled = page >= pageCount - 1;
+  $('resultsSummary').textContent = filtered.length === allWorktrees.length
+    ? `${allWorktrees.length} total`
+    : `${filtered.length} of ${allWorktrees.length} match “${filterText}”`;
+
+  if (rows.length === 0) {
+    body.innerHTML = filterText
+      ? `<div class="empty"><strong>Nothing matches “${esc(filterText)}”</strong>Clear the filter to see every worktree.</div>`
+      : `<div class="empty"><strong>No worktrees yet</strong>Name a branch above and create one — it gets its own port and its own terminal.</div>`;
+    return;
+  }
+
+  body.innerHTML = rows.map((w) => `<div class="row">${rowHtml(w)}</div>`).join('');
+  for (const w of rows) if (expanded.has(w.id)) loadDetail(w.id);
+  if (openMenu && !rows.some((w) => w.id === openMenu)) openMenu = null;
+}
+
+function renderKpis(total) {
+  const running = allWorktrees.filter((w) => isRunning(w.status)).length;
+  const claude = allWorktrees.filter((w) => w.status === 'session-running').length;
+  $('kpiCount').textContent = allWorktrees.length;
+  $('kpiCountFoot').textContent = allWorktrees.length
+    ? `${allWorktrees.filter((w) => w.tracked).length} tracked here`
+    : 'none yet';
+  $('kpiRunning').textContent = running;
+  $('kpiRunningFoot').textContent = running ? `${claude} with a Claude session` : 'nothing listening';
+  $('kpiCost').textContent = total ? fmtUsd(total.usd) : '—';
+  $('kpiCostFoot').textContent = `alert above ${fmtUsd(Number(config.costThreshold ?? 20))}`;
+  $('kpiTokens').textContent = total ? fmtTokens(total.total) : '—';
+  $('totalCost').textContent = `Estimated cost ${total ? fmtUsd(total.usd) : '—'}`;
+  $('totalUsage').textContent = `Tokens ${total ? fmtTokens(total.total) : '—'}`;
 }
 
 async function refresh() {
   try {
     allWorktrees = await api('/api/worktrees');
   } catch (e) {
-    document.getElementById('wtBody').innerHTML = `<tr><td colspan="7">Error: ${e.message}</td></tr>`;
+    $('wtBody').innerHTML = `<div class="empty"><strong>Can't reach the dashboard</strong>${esc(e.message)}</div>`;
     return;
   }
   render();
-
-  try {
-    const total = await api('/api/usage/total');
-    document.getElementById('totalUsage').textContent = `Total tokens: ${fmtTokens(total.total)}`;
-    document.getElementById('totalCost').textContent = `Total est. cost: ${fmtUsd(total.usd)}`;
-  } catch { /* ignore */ }
+  try { renderKpis(await api('/api/usage/total')); } catch { renderKpis(null); }
 }
 
-function render() {
-  const body = document.getElementById('wtBody');
-  body.innerHTML = '';
-
-  const filtered = allWorktrees.filter((w) => (w.branch || '').toLowerCase().includes(filterText));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  if (page >= pageCount) page = pageCount - 1;
-  document.getElementById('pageLabel').textContent = `Page ${page + 1} of ${pageCount} (${filtered.length})`;
-  const rows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-
-  if (rows.length === 0) {
-    body.innerHTML = `<tr><td colspan="7" class="muted">No worktrees${filterText ? ' match that filter' : ' yet'}.</td></tr>`;
-    return;
-  }
-
-  for (const w of rows) {
-    const tr = document.createElement('tr');
-    const u = w.usage || {};
-    const costLabel = u.available ? `${fmtUsd(u.usd)}${u.estimated ? '*' : ''} ${expanded.has(w.id) ? '&#9662;' : '&#9656;'}` : '--';
-    const src = w.tracked ? '' : '<span class="tag">discovered</span>';
-    tr.innerHTML = `
-      <td>${w.branch || '(unknown)'} ${src}</td>
-      <td class="path" title="${w.path}">${w.path}</td>
-      <td>${portCell(w)}</td>
-      <td><span class="status status-${w.status}">${w.status}</span></td>
-      <td><button class="link" data-action="toggle-cost" data-id="${w.id}">${costLabel}</button></td>
-      <td>${fmtTokens(u.total)}</td>
-      <td>${actionsFor(w)}</td>
-    `;
-    body.appendChild(tr);
-
-    if (expanded.has(w.id)) {
-      const detail = document.createElement('tr');
-      detail.className = 'detail-row';
-      detail.innerHTML = `<td colspan="7"><div class="detail" id="detail-${w.id}">Loading breakdown...</div></td>`;
-      body.appendChild(detail);
-      loadDetail(w.id);
-    }
-  }
-
-  wireButtons();
-}
+const BREAKDOWN = [
+  ['Input', 'input_tokens'],
+  ['Output', 'output_tokens'],
+  ['Cache write', 'cache_creation_input_tokens'],
+  ['Cache read', 'cache_read_input_tokens']
+];
 
 async function loadDetail(id) {
-  const el = document.getElementById('detail-' + id);
+  const el = $('detail-' + id);
   if (!el) return;
   try {
     const d = await api(`/api/worktrees/${id}/usage`);
-    if (!d.available) { el.innerHTML = '<span class="muted">No Claude transcripts found for this worktree.</span>'; return; }
-    const sessionRows = d.sessions.map((s) => `
-      <tr><td>${(s.mtime || '').slice(0, 16).replace('T', ' ')}</td>
-      <td>${fmtTokens(s.total)}</td><td>${fmtUsd(s.usd)}</td></tr>`).join('');
-    const tips = (d.recommendations || []).map((t) => `<li>${t}</li>`).join('');
+    if (!d.available) {
+      el.innerHTML = '<div class="tips">No Claude transcripts found for this worktree yet.</div>';
+      return;
+    }
+    const cells = BREAKDOWN.map(([label, key]) => `
+      <div>
+        <div class="breakdown-label">${label}</div>
+        <div class="breakdown-value">${fmtInt((d.totals || {})[key] || 0)}</div>
+      </div>`).join('');
+    const tips = (d.recommendations || []).map((t) => `<li>${esc(t)}</li>`).join('');
     el.innerHTML = `
-      <div class="detail-grid">
-        <div>
-          <table class="mini">
-            <thead><tr><th>Session</th><th>Tokens</th><th>Est. cost</th></tr></thead>
-            <tbody>${sessionRows || '<tr><td colspan="3" class="muted">no sessions</td></tr>'}</tbody>
-          </table>
-        </div>
-        <div>
-          <div class="muted">Optimization tips${d.estimated ? ' (cost is estimated)' : ''}</div>
-          <ul>${tips || '<li class="muted">Nothing to flag.</li>'}</ul>
-        </div>
+      <div class="breakdown">${cells}</div>
+      <div class="tips">
+        <b>Tips</b>
+        <ul>${tips || '<li>Nothing to flag.</li>'}</ul>
+        ${d.estimated ? '<div class="caveat">* some model ids were unknown and priced at the fallback rate</div>' : ''}
       </div>`;
   } catch (e) {
-    el.innerHTML = `<span class="muted">Error: ${e.message}</span>`;
+    el.innerHTML = `<div class="tips">${esc(e.message)}</div>`;
   }
 }
 
-function wireButtons() {
-  const body = document.getElementById('wtBody');
-  body.querySelectorAll('button[data-action]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
+// ---- actions -------------------------------------------------------------
 
-      if (action === 'toggle-cost') {
-        if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
-        render();
+function closeMenu() {
+  openMenu = null;
+  document.querySelectorAll('.menu, .menu-backdrop').forEach((n) => n.remove());
+  document.querySelectorAll('[data-action="menu"]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+
+function showMenu(btn, w) {
+  closeMenu();
+  openMenu = w.id;
+  btn.setAttribute('aria-expanded', 'true');
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'menu-backdrop';
+  backdrop.addEventListener('click', closeMenu);
+
+  const menu = document.createElement('div');
+  menu.className = 'menu';
+  menu.innerHTML = menuHtml(w);
+  document.body.append(backdrop, menu);
+
+  // Anchor to the button, flipping above it when there isn't room below.
+  const r = btn.getBoundingClientRect();
+  menu.style.left = Math.max(8, r.right - menu.offsetWidth) + 'px';
+  menu.style.top = (r.bottom + 6 + menu.offsetHeight > innerHeight
+    ? r.top - 6 - menu.offsetHeight
+    : r.bottom + 6) + 'px';
+  menu.querySelector('button, input')?.focus();
+}
+
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  const w = allWorktrees.find((x) => x.id === id);
+  if (!w) return;
+
+  if (action === 'toggle-cost') {
+    if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+    render();
+    return;
+  }
+  if (action === 'menu') {
+    if (openMenu === id) closeMenu(); else showMenu(btn, w);
+    return;
+  }
+  if (action === 'open-pr') { window.open(w.prUrl, '_blank', 'noopener'); closeMenu(); return; }
+
+  const claudeBox = document.querySelector(`input[data-claude="${id}"]`);
+  const withClaude = claudeBox ? claudeBox.checked : true;
+  closeMenu();
+  btn.disabled = true;
+
+  try {
+    if (action === 'start') {
+      await api(`/api/worktrees/${id}/start`, { method: 'POST', body: JSON.stringify({ withClaude }) });
+    } else if (action === 'mark-idle') {
+      await api(`/api/worktrees/${id}/mark-idle`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'terminal') {
+      await api(`/api/worktrees/${id}/terminal`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'vscode') {
+      await api(`/api/worktrees/${id}/vscode`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'push') {
+      const r = await api(`/api/worktrees/${id}/push`, { method: 'POST', body: JSON.stringify({}) });
+      window.open(r.url, '_blank', 'noopener');
+    } else if (action === 'commit') {
+      await api(`/api/worktrees/${id}/commit`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'reinstall') {
+      await api(`/api/worktrees/${id}/reinstall`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'remove') {
+      if (!confirm(`Remove ${w.branch}? Uncommitted changes in that worktree are lost. The branch and its commits are kept.`)) {
+        btn.disabled = false;
         return;
       }
-
-      btn.disabled = true;
-      try {
-        if (action === 'start') {
-          const cb = body.querySelector(`input[data-claude="${id}"]`);
-          const withClaude = cb ? cb.checked : true;
-          await api(`/api/worktrees/${id}/start`, { method: 'POST', body: JSON.stringify({ withClaude }) });
-        } else if (action === 'terminal') {
-          await api(`/api/worktrees/${id}/terminal`, { method: 'POST', body: JSON.stringify({}) });
-        } else if (action === 'vscode') {
-          await api(`/api/worktrees/${id}/vscode`, { method: 'POST', body: JSON.stringify({}) });
-        } else if (action === 'mark-idle') {
-          await api(`/api/worktrees/${id}/mark-idle`, { method: 'POST', body: JSON.stringify({}) });
-        } else if (action === 'push') {
-          const r = await api(`/api/worktrees/${id}/push`, { method: 'POST', body: JSON.stringify({}) });
-          alert('PR created: ' + r.url);
-        } else if (action === 'commit') {
-          await api(`/api/worktrees/${id}/commit`, { method: 'POST', body: JSON.stringify({}) });
-        } else if (action === 'reinstall') {
-          await api(`/api/worktrees/${id}/reinstall`, { method: 'POST', body: JSON.stringify({}) });
-        } else if (action === 'remove') {
-          if (!confirm('Remove this worktree? Uncommitted changes will be lost. The branch is kept.')) {
-            btn.disabled = false;
-            return;
-          }
-          await api(`/api/worktrees/${id}`, { method: 'DELETE' });
-        }
-      } catch (e) {
-        alert('Error: ' + e.message);
-      }
-      await refresh();
-    });
-  });
-}
+      await api(`/api/worktrees/${id}`, { method: 'DELETE' });
+    }
+  } catch (err) {
+    alert(err.message);
+  }
+  await refresh();
+});
 
 loadConfig();
 refresh();
-setInterval(refresh, 5000);
+setInterval(() => { if (!openMenu) refresh(); }, 5000);

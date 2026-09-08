@@ -109,7 +109,10 @@ function createApp() {
       usd: cost.usd,
       costThreshold: s.config.costThreshold || 20
     });
-    res.json({ available: u.available, usd: cost.usd, estimated: cost.estimated, byModel: cost.byModel, sessions, recommendations: tips });
+    res.json({
+      available: u.available, usd: cost.usd, estimated: cost.estimated,
+      byModel: cost.byModel, totals: u.totals, sessions, recommendations: tips
+    });
   });
 
   app.post('/api/worktrees', async (req, res) => {
@@ -138,6 +141,7 @@ function createApp() {
       const id = crypto.randomUUID();
       const record = {
         id, branch, path: worktreePath, port,
+        baseRef: baseRef || 'HEAD',
         status: 'created',
         tracked: true,
         adopted: true,
