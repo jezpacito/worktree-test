@@ -329,7 +329,7 @@ textarea { font-family: var(--font-mono); font-size: var(--text-sm); color: var(
 .status .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 .tone-running   { background: var(--mint-bg);     color: var(--mint-fg); }
-.tone-running .dot   { background: var(--mint-dot); animation: pulse 1.6s ease-in-out infinite; }
+.tone-running .dot   { background: var(--mint-dot); }
 .tone-idle      { background: var(--slate-bg);    color: var(--slate-fg); }
 .tone-idle .dot      { background: var(--slate-dot); }
 .tone-pending   { background: var(--sky-bg);      color: var(--sky-fg); }
@@ -340,8 +340,6 @@ textarea { font-family: var(--font-mono); font-size: var(--text-sm); color: var(
 .tone-found .dot     { background: var(--lavender-dot); }
 .tone-gone      { background: var(--rose-bg);     color: var(--rose-fg); }
 .tone-gone .dot      { background: var(--rose-dot); }
-
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
 .cost-toggle {
   display: flex; align-items: center; gap: var(--space-1);

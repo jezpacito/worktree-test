@@ -46,7 +46,7 @@
           <div class="kpi-foot" id="kpiCountFoot">&nbsp;</div>
         </div>
         <div class="card kpi">
-          <div class="kpi-label">Running now</div>
+          <div class="kpi-label">Launched</div>
           <div class="kpi-value" id="kpiRunning">&mdash;</div>
           <div class="kpi-foot" id="kpiRunningFoot">&nbsp;</div>
         </div>
@@ -157,14 +157,15 @@
         </div>
         <div class="table-scroll">
           <div class="row-grid col-head">
-            <div>Branch</div><div>Path</div><div>Port</div><div>Status</div>
+            <div>Branch</div><div>Path</div><div>Port</div>
+            <div title="What the dashboard last recorded. Closing a terminal yourself does not update this — use Mark idle.">Status</div>
             <div>Cost</div><div>Tokens</div><div class="align-end">Actions</div>
           </div>
           <div id="wtBody"></div>
         </div>
       </section>
 
-      <p class="footnote">Config, port assignments and launcher scripts live in <code>~/.worktree-dashboard</code>.</p>
+      <p class="footnote">Status reflects what the dashboard last launched, not a live process check. Config, ports and launcher scripts live in <code>~/.worktree-dashboard</code>.</p>
 
     </div>
   </div>

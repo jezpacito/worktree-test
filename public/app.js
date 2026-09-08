@@ -122,10 +122,13 @@ $('createWorktree').addEventListener('click', async () => {
 
 // ---- status tones --------------------------------------------------------
 
+// The dashboard records what it launched; it never polls to see whether that
+// terminal is still open. These labels describe the last recorded action, not
+// a verified live process.
 const TONES = {
   'session-running':        { tone: 'running', label: 'Claude + dev server' },
   'dev-running':            { tone: 'running', label: 'Dev server' },
-  'created':                { tone: 'running', label: 'Starting' },
+  'created':                { tone: 'warn',    label: 'Never launched' },
   'idle':                   { tone: 'idle',    label: 'Idle' },
   'session-exited':         { tone: 'idle',    label: 'Session ended' },
   'no-changes':             { tone: 'idle',    label: 'No changes' },
@@ -135,7 +138,7 @@ const TONES = {
   'missing':                { tone: 'gone',    label: 'Folder missing' }
 };
 const toneFor = (s) => TONES[s] || { tone: 'idle', label: s };
-const isRunning = (s) => s === 'session-running' || s === 'dev-running' || s === 'created';
+const isRunning = (s) => s === 'session-running' || s === 'dev-running';
 
 // ---- table ---------------------------------------------------------------
 
@@ -207,7 +210,7 @@ function rowHtml(w) {
   const primary = w.status === 'missing' ? ''
     : isRunning(w.status)
       ? `<button class="btn btn-ghost btn-sm" data-action="mark-idle" data-id="${w.id}" title="You closed that terminal yourself — resets this row to idle and frees the port. It does not stop a running process.">Mark idle</button>`
-      : `<button class="btn btn-primary btn-sm" data-action="start" data-id="${w.id}" title="Opens a terminal running the dev server on this worktree's port.">Start</button>`;
+      : `<button class="btn btn-primary btn-sm" data-action="start" data-id="${w.id}" title="${config.capabilities?.openTerminal ? 'Opens a terminal running the dev server on this worktree\'s port.' : 'Starts the dev server on this worktree\'s port.'}">Start</button>`;
 
   return `
     <div class="row-grid">
@@ -235,7 +238,9 @@ function menuHtml(w) {
     items.push(`<label><input type="checkbox" data-claude="${w.id}" checked> Run Claude on start</label>`);
   }
   if (w.status !== 'missing') {
-    items.push(`<button data-action="terminal" data-id="${w.id}">Open terminal</button>`);
+    if (config.capabilities?.openTerminal) {
+      items.push(`<button data-action="terminal" data-id="${w.id}">Open terminal</button>`);
+    }
     items.push(`<button data-action="vscode" data-id="${w.id}">Open in VS Code</button>`);
   }
   if (w.status === 'committed-pending-push') {
@@ -287,7 +292,9 @@ function renderKpis(total) {
     ? `${allWorktrees.filter((w) => w.tracked).length} tracked here`
     : 'none yet';
   $('kpiRunning').textContent = running;
-  $('kpiRunningFoot').textContent = running ? `${claude} with a Claude session` : 'nothing listening';
+  $('kpiRunningFoot').textContent = running
+    ? `${claude} launched with Claude`
+    : 'none launched from here';
   $('kpiCost').textContent = total ? fmtUsd(total.usd) : '—';
   $('kpiCostFoot').textContent = `alert above ${fmtUsd(Number(config.costThreshold ?? 20))}`;
   $('kpiTokens').textContent = total ? fmtTokens(total.total) : '—';

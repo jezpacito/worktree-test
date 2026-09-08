@@ -86,6 +86,14 @@ and create PR, Commit now, Reinstall deps, Remove) lives in the row's ⋯ menu.
 Expanding the cost cell breaks the spend into input, output, cache write and
 cache read tokens, alongside the optimization tips.
 
+**Status is a record, not a probe.** The dashboard stores what it last
+launched; it never polls to check whether that terminal is still open or
+whether the port is answering. Close a terminal yourself and the row keeps
+saying "Dev server" until you hit **Mark idle** (or restart the dashboard,
+which downgrades leftover running rows). The UI only offers actions this
+machine can perform -- **Open terminal** is hidden off Windows, since that is
+the only platform it is implemented for.
+
 ## Requirements
 
 - Node.js (no admin rights needed to run it once installed; if Node itself

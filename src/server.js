@@ -11,6 +11,12 @@ const session = require('./session');
 const usage = require('./usage');
 const { reconcile } = require('./reconcile');
 
+// What this machine can actually do, so the UI only offers real actions.
+// Opening a terminal is implemented for Windows Terminal / PowerShell only.
+function capabilities() {
+  return { openTerminal: process.platform === 'win32' };
+}
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -20,7 +26,7 @@ function createApp() {
 
   app.get('/api/config', (req, res) => {
     const s = state.load();
-    res.json(s.config);
+    res.json({ ...s.config, capabilities: capabilities() });
   });
 
   app.post('/api/config', (req, res) => {
@@ -60,7 +66,7 @@ function createApp() {
     };
     if (!s.nextPort || s.nextPort < s.config.startPort) s.nextPort = s.config.startPort;
     state.save(s);
-    res.json(s.config);
+    res.json({ ...s.config, capabilities: capabilities() });
   });
 
   // ---- worktrees ---------------------------------------------------------
