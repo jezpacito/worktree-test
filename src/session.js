@@ -144,6 +144,37 @@ Write-Host ""
 `;
 }
 
+// Just the Claude session for this worktree -- no dev server, no port, and no
+// auto-commit callback. For reading back what a session did without committing
+// to a full Start. The cwd is the worktree root, which is what keys Claude's
+// transcript directory, so --resume finds the right conversation.
+function buildClaudeScript({ worktreePath, claudeArgs }) {
+  const wtPath = q(worktreePath);
+  return `
+$ErrorActionPreference = 'Continue'
+Set-Location -LiteralPath "${wtPath}"
+
+Write-Host "== worktree-dashboard: claude session only ==" -ForegroundColor Cyan
+Write-Host "Worktree: ${wtPath}"
+Write-Host "No dev server started, and nothing is committed when you exit." -ForegroundColor DarkGray
+Write-Host ""
+
+claude ${claudeArgs || ''}
+`;
+}
+
+async function openClaude({ worktreeId, worktreePath, claudeArgs }) {
+  if (process.platform !== 'win32') {
+    throw new Error('Opening a Claude session window is only wired up for Windows (Windows Terminal / PowerShell).');
+  }
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}-claude.ps1`);
+  fs.writeFileSync(scriptPath, buildClaudeScript({ worktreePath, claudeArgs }), 'utf8');
+  const child = await spawnWindow(scriptPath, `claude:${worktreeId}`);
+  child.unref();
+  return { pid: child.pid, scriptPath };
+}
+
 // Windows Terminal when it's installed (nicer tabs), plain PowerShell otherwise.
 // Both keep the window open after the script finishes (-NoExit).
 async function spawnWindow(scriptPath, title) {
@@ -214,4 +245,4 @@ async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvV
   return { pid: child.pid, scriptPath };
 }
 
-module.exports = { launchSession, openTerminal, openInVsCode, claudeArgsFor, buildPowerShellScript, buildTerminalScript };
+module.exports = { launchSession, openTerminal, openInVsCode, openClaude, claudeArgsFor, buildPowerShellScript, buildTerminalScript, buildClaudeScript };

@@ -304,3 +304,16 @@ test('transcriptExists: true only when that session id has a .jsonl on disk', ()
   fs.writeFileSync(path.join(dir, `${id}.jsonl`), '{}\n');
   assert.strictEqual(usage.transcriptExists(worktree, id, projects), true);
 });
+
+test('buildClaudeScript: resumes claude at the worktree root, with no dev server', () => {
+  const script = session.buildClaudeScript({
+    worktreePath: 'C:\\wt\\feature',
+    claudeArgs: '--resume aaaaaaaa-0000-4000-8000-000000000001'
+  });
+  assert.match(script, /Set-Location -LiteralPath "C:\\wt\\feature"/);
+  assert.match(script, /claude --resume aaaaaaaa-0000-4000-8000-000000000001/);
+  // no dev server, and nothing that would auto-commit on exit
+  assert.doesNotMatch(script, /Start-Job/);
+  assert.doesNotMatch(script, /Invoke-RestMethod/);
+  assert.doesNotMatch(script, /npm run dev/);
+});

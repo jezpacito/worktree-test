@@ -37,7 +37,9 @@ project's own config files and without needing admin rights on Windows.
   without saying anything is never written, and resuming it would fail. The
   row shows the first eight characters of the id, and **Start a fresh Claude
   session** in the row menu rotates it when you want a clean slate (the old
-  transcript is kept, so its cost still counts).
+  transcript is kept, so its cost still counts). **Open Claude session** in
+  the same menu reopens that conversation on its own, without starting a dev
+  server or changing the row's status.
 - **Port numbers are links.** Click a worktree's port in the table to open
   `http://localhost:<port>` in a new tab. The link is dimmed on a worktree the
   dashboard has not launched, but stays clickable -- that port belongs to that
@@ -166,6 +168,7 @@ Every other per-row action lives in that same **⋯** menu:
 | Action | What it does |
 | --- | --- |
 | **Run Claude on start** | Untick before hitting **Start** to get the dev server on its own. |
+| **Open Claude session** | Just the Claude conversation for that worktree, resumed. No dev server, no port taken, nothing committed when you exit, and the row's status is untouched -- for checking back on a session without starting anything. Windows only. |
 | **Open terminal** | A shell in that worktree's app folder with the port env var already exported. Windows only -- the menu hides it elsewhere. |
 | **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
 | **Commit now** | Commits everything in that worktree. Never pushes. |

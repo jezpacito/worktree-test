@@ -363,6 +363,33 @@ function createApp() {
     }
   });
 
+  // Open just this worktree's Claude session -- no dev server, no port, no
+  // status change. Resumes the same conversation Start would.
+  app.post('/api/worktrees/:id/claude', async (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
+    try {
+      if (!w.claudeSessionId) {
+        w.claudeSessionId = crypto.randomUUID();
+        state.save(s);
+      }
+      const result = await session.openClaude({
+        worktreeId: w.id,
+        worktreePath: w.path,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: w.claudeSessionId,
+          hasTranscript: usage.transcriptExists(w.path, w.claudeSessionId),
+          extra: req.body.claudeArgs
+        })
+      });
+      res.json({ ...result, claudeSessionId: w.claudeSessionId });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.post('/api/worktrees/:id/vscode', async (req, res) => {
     const s = state.load();
     const w = s.worktrees[req.params.id];

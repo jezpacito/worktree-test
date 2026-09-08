@@ -242,6 +242,7 @@ function menuHtml(w) {
   }
   if (w.status !== 'missing') {
     if (config.capabilities?.openTerminal) {
+      items.push(`<button data-action="claude" data-id="${w.id}" title="Opens the Claude session for this worktree on its own -- no dev server, no port, nothing committed on exit. Close the worktree's other window first if one is already open on this session.">Open Claude session</button>`);
       items.push(`<button data-action="terminal" data-id="${w.id}">Open terminal</button>`);
     }
     items.push(`<button data-action="vscode" data-id="${w.id}">Open in VS Code</button>`);
@@ -414,6 +415,8 @@ document.addEventListener('click', async (e) => {
       await api(`/api/worktrees/${id}/start`, { method: 'POST', body: JSON.stringify({ withClaude }) });
     } else if (action === 'mark-idle') {
       await api(`/api/worktrees/${id}/mark-idle`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'claude') {
+      await api(`/api/worktrees/${id}/claude`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'terminal') {
       await api(`/api/worktrees/${id}/terminal`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'vscode') {
