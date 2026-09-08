@@ -29,14 +29,15 @@ project's own config files and without needing admin rights on Windows.
   app subfolder, if you set one), setting your port env var (e.g. `PORT`) to
   the port assigned to that worktree.
 - **Port numbers are links.** Click a worktree's port in the table to open
-  `http://localhost:<port>` in a new tab. The link turns green while that
-  worktree's dev server is actually running.
-- **Opens a terminal or VS Code at any worktree.** Every row has a
-  **Terminal** button (Windows Terminal if installed, otherwise PowerShell)
-  that drops you into that worktree's app folder with the port env var already
-  exported, so `npm run dev` just works -- and a **VS Code** button that opens
-  the worktree root in your editor. Neither is tracked as a session: closing
-  the terminal doesn't change the row's status.
+  `http://localhost:<port>` in a new tab. The link is dimmed on a worktree the
+  dashboard has not launched, but stays clickable -- that port belongs to that
+  worktree either way.
+- **Opens a terminal or VS Code at any worktree**, from the row's menu.
+  **Open terminal** (Windows only -- Windows Terminal if installed, otherwise
+  PowerShell) drops you into that worktree's app folder with the port env var
+  already exported, so `npm run dev` just works. **Open in VS Code** opens the
+  worktree root in your editor. Neither is tracked as a session: closing the
+  terminal doesn't change the row's status.
 - **Allocates ports starting at 5002**, incrementing for each new worktree,
   and reclaims a port once you remove that worktree.
 - **Launches a real terminal per worktree** (Windows Terminal if installed,
@@ -76,7 +77,7 @@ project's own config files and without needing admin rights on Windows.
 ## The interface
 
 Settings are collapsed behind a button in the top bar, so the page opens on
-what you actually came for: four counters (worktrees, how many are running,
+what you actually came for: four counters (worktrees, how many were launched,
 estimated cost, tokens), the create form, and the worktree table. Each row
 carries its branch, a shortened path, a clickable port, a status pill, an
 expandable cost cell, and one primary button — **Start** when idle, **Mark
