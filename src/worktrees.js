@@ -19,6 +19,25 @@ function run(cmd, args, cwd) {
   return execFileP(cmd, args, { cwd, windowsHide: true, maxBuffer: 1024 * 1024 * 32 });
 }
 
+// Resolve the folder the app actually lives in inside a checkout. `appDir` is
+// a repo-root-relative path (e.g. "src/renderer") for projects whose
+// package.json / .env.development / node_modules sit in a subfolder rather
+// than at the git root. Blank means "the checkout root itself".
+function resolveAppPath(rootPath, appDir) {
+  const root = path.resolve(rootPath);
+  const rel = (appDir || '').trim();
+  if (!rel) return root;
+  if (path.isAbsolute(rel)) {
+    throw new Error(`App subfolder must be relative to the repo root, got: ${rel}`);
+  }
+  const resolved = path.resolve(root, rel);
+  const inside = resolved === root || resolved.startsWith(root + path.sep);
+  if (!inside) {
+    throw new Error(`App subfolder resolves outside the checkout: ${rel}`);
+  }
+  return resolved;
+}
+
 function sanitizeBranchForDir(branch) {
   return branch.replace(/[\\/:*?"<>|]/g, '-');
 }
@@ -49,20 +68,18 @@ async function createWorktree({ repoPath, worktreesRoot, branch, baseRef }) {
   return worktreePath;
 }
 
-async function linkNodeModules({ repoPath, worktreePath }) {
-  const src = path.join(repoPath, 'node_modules');
-  const dest = path.join(worktreePath, 'node_modules');
-
+async function linkOneNodeModules(src, dest) {
   if (!fs.existsSync(src)) {
-    return { linked: false, reason: 'Main repo has no node_modules yet -- run npm install there first.' };
+    return { linked: false, reason: `No node_modules at ${src} -- run npm install there first.` };
   }
   if (fs.existsSync(dest)) {
     return { linked: false, reason: 'node_modules already exists in the worktree.' };
   }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
 
   if (process.platform === 'win32') {
     // /J junction: works without admin rights or Developer Mode, unlike mklink /D symlinks.
-    await run('cmd.exe', ['/c', 'mklink', '/J', dest, src], worktreePath);
+    await run('cmd.exe', ['/c', 'mklink', '/J', dest, src], path.dirname(dest));
   } else {
     // symlinks are unrestricted on macOS/Linux
     fs.symlinkSync(src, dest, 'dir');
@@ -70,18 +87,37 @@ async function linkNodeModules({ repoPath, worktreePath }) {
   return { linked: true };
 }
 
-async function reinstallDeps({ worktreePath }) {
-  const dest = path.join(worktreePath, 'node_modules');
+// Junction node_modules from the main checkout into the worktree. A project may
+// keep its dependencies at the repo root, inside the app subfolder, or both --
+// each level that actually has a node_modules in the main repo gets linked.
+async function linkNodeModules({ repoPath, worktreePath, appDir }) {
+  const levels = [{ label: 'root', rel: '' }];
+  if ((appDir || '').trim()) levels.push({ label: appDir, rel: appDir });
+
+  const results = {};
+  for (const level of levels) {
+    const src = path.join(resolveAppPath(repoPath, level.rel), 'node_modules');
+    const dest = path.join(resolveAppPath(worktreePath, level.rel), 'node_modules');
+    results[level.label] = await linkOneNodeModules(src, dest);
+  }
+
+  return { linked: Object.values(results).some((r) => r.linked), levels: results };
+}
+
+async function reinstallDeps({ worktreePath, appDir }) {
+  const appPath = resolveAppPath(worktreePath, appDir);
+  const dest = path.join(appPath, 'node_modules');
   if (fs.existsSync(dest)) {
     // remove the junction/symlink (or folder) first
     fs.rmSync(dest, { recursive: true, force: true });
   }
-  await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install'], worktreePath);
+  await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install'], appPath);
 }
 
-function copyAndPatchEnvFile({ repoPath, worktreePath, envFileName, portEnvVar, port }) {
-  const src = path.join(repoPath, envFileName);
-  const dest = path.join(worktreePath, envFileName);
+function copyAndPatchEnvFile({ repoPath, worktreePath, appDir, envFileName, portEnvVar, port }) {
+  const src = path.join(resolveAppPath(repoPath, appDir), envFileName);
+  const destDir = resolveAppPath(worktreePath, appDir);
+  const dest = path.join(destDir, envFileName);
 
   let contents = '';
   if (fs.existsSync(src)) {
@@ -100,6 +136,7 @@ function copyAndPatchEnvFile({ repoPath, worktreePath, envFileName, portEnvVar, 
   });
   if (!found) patched.push(`${portEnvVar}=${port}`);
 
+  fs.mkdirSync(destDir, { recursive: true });
   fs.writeFileSync(dest, patched.join('\n') + '\n', 'utf8');
   return { copiedFrom: fs.existsSync(src) ? src : null, dest };
 }
@@ -154,6 +191,7 @@ async function listGitWorktrees({ repoPath }) {
 }
 
 module.exports = {
+  resolveAppPath,
   createWorktree,
   linkNodeModules,
   reinstallDeps,

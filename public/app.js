@@ -13,6 +13,7 @@ async function api(path, opts) {
 async function loadConfig() {
   const cfg = await api('/api/config');
   document.getElementById('cfgRepoPath').value = cfg.repoPath || '';
+  document.getElementById('cfgAppDir').value = cfg.appDir || '';
   document.getElementById('cfgDevCommand').value = cfg.devCommand || '';
   document.getElementById('cfgPortEnvVar').value = cfg.portEnvVar || '';
   document.getElementById('cfgEnvFile').value = cfg.envFileName || '';
@@ -20,7 +21,24 @@ async function loadConfig() {
   document.getElementById('cfgWorktreesRoot').value = cfg.worktreesRoot || '';
   document.getElementById('cfgCostThreshold').value = cfg.costThreshold ?? '';
   document.getElementById('cfgPricing').value = JSON.stringify(cfg.pricing || {}, null, 2);
+  renderAppDirHint();
 }
+
+// Echo where the dev command will actually run, so a wrong subfolder is
+// obvious before any worktree gets created.
+function renderAppDirHint() {
+  const repo = document.getElementById('cfgRepoPath').value.trim();
+  const appDir = document.getElementById('cfgAppDir').value.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+  const hint = document.getElementById('appDirHint');
+  if (!repo) { hint.textContent = ''; return; }
+  const sep = repo.includes('\\') ? '\\' : '/';
+  const wtRoot = repo.split(/[\\/]/).slice(0, -1).join(sep) + sep + '.worktrees' + sep + 'wt-<branch>';
+  const target = appDir ? wtRoot + sep + appDir.replace(/\//g, sep) : wtRoot;
+  hint.textContent = `Dev command and env file will resolve to: ${target}`;
+}
+
+document.getElementById('cfgAppDir').addEventListener('input', renderAppDirHint);
+document.getElementById('cfgRepoPath').addEventListener('input', renderAppDirHint);
 
 document.getElementById('saveConfig').addEventListener('click', async () => {
   const status = document.getElementById('configStatus');
@@ -30,6 +48,7 @@ document.getElementById('saveConfig').addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({
         repoPath: document.getElementById('cfgRepoPath').value.trim(),
+        appDir: document.getElementById('cfgAppDir').value.trim(),
         devCommand: document.getElementById('cfgDevCommand').value.trim(),
         portEnvVar: document.getElementById('cfgPortEnvVar').value.trim(),
         envFileName: document.getElementById('cfgEnvFile').value.trim(),
@@ -93,28 +112,44 @@ function fmtUsd(n) {
   return '~$' + n.toFixed(2);
 }
 
+const TIP = {
+  start: "Opens a terminal running the dev server on this worktree's port (plus Claude if ticked).",
+  claude: 'Also run the Claude CLI in that terminal, and auto-commit when you exit it.',
+  terminal: 'Opens PowerShell in this worktree\'s app folder with the port env var already set -- for running the dev command yourself.',
+  vscode: "Opens this worktree's root folder in VS Code.",
+  markIdle: 'You closed the terminal yourself -- reset this row to idle and free the port.',
+  push: 'Pushes this branch and opens a PR. Nothing is pushed without this.',
+  commit: 'Commit everything in this worktree now (never pushes).',
+  reinstall: 'Replaces the shared node_modules junction with a real npm install in this worktree.',
+  remove: 'Deletes the worktree folder. The branch and its commits are kept.'
+};
+
 function actionsFor(w) {
   const a = [];
   const running = w.status === 'session-running' || w.status === 'dev-running';
   if (!running && w.status !== 'missing') {
     a.push(
-      `<label class="inline-check"><input type="checkbox" data-claude="${w.id}" checked> Claude</label>` +
-      `<button data-action="start" data-id="${w.id}">Start</button>`
+      `<label class="inline-check" title="${TIP.claude}"><input type="checkbox" data-claude="${w.id}" checked> Claude</label>` +
+      `<button data-action="start" data-id="${w.id}" title="${TIP.start}">Start</button>`
     );
   }
   if (running) {
-    a.push(`<button class="secondary" data-action="mark-idle" data-id="${w.id}">Mark idle</button>`);
-  }
-  if (w.status === 'committed-pending-push') {
-    a.push(`<button data-action="push" data-id="${w.id}">Push &amp; create PR</button>`);
-  }
-  if (w.status === 'session-exited' || w.status === 'no-changes') {
-    a.push(`<button class="secondary" data-action="commit" data-id="${w.id}">Commit now</button>`);
+    a.push(`<button class="secondary" data-action="mark-idle" data-id="${w.id}" title="${TIP.markIdle}">Mark idle</button>`);
   }
   if (w.status !== 'missing') {
-    a.push(`<button class="secondary" data-action="reinstall" data-id="${w.id}">Reinstall deps</button>`);
+    a.push(`<button class="secondary" data-action="terminal" data-id="${w.id}" title="${TIP.terminal}">Terminal</button>`);
+    a.push(`<button class="secondary" data-action="vscode" data-id="${w.id}" title="${TIP.vscode}">VS Code</button>`);
   }
-  a.push(`<button class="danger" data-action="remove" data-id="${w.id}">Remove</button>`);
+  if (w.status === 'committed-pending-push') {
+    a.push(`<button data-action="push" data-id="${w.id}" title="${TIP.push}">Push &amp; create PR</button>`);
+  }
+  if (w.status === 'session-exited' || w.status === 'no-changes') {
+    a.push(`<button class="secondary" data-action="commit" data-id="${w.id}" title="${TIP.commit}">Commit now</button>`);
+  }
+  if (w.status !== 'missing') {
+    a.push(`<button class="secondary" data-action="reinstall" data-id="${w.id}" title="${TIP.reinstall}">Reinstall deps</button>`);
+  }
+  a.push(`<button class="danger" data-action="remove" data-id="${w.id}" title="${TIP.remove}">Remove</button>`);
   if (w.prUrl) a.push(`<a href="${w.prUrl}" target="_blank">PR &#8599;</a>`);
   return a.join(' ');
 }
@@ -225,6 +260,10 @@ function wireButtons() {
           const cb = body.querySelector(`input[data-claude="${id}"]`);
           const withClaude = cb ? cb.checked : true;
           await api(`/api/worktrees/${id}/start`, { method: 'POST', body: JSON.stringify({ withClaude }) });
+        } else if (action === 'terminal') {
+          await api(`/api/worktrees/${id}/terminal`, { method: 'POST', body: JSON.stringify({}) });
+        } else if (action === 'vscode') {
+          await api(`/api/worktrees/${id}/vscode`, { method: 'POST', body: JSON.stringify({}) });
         } else if (action === 'mark-idle') {
           await api(`/api/worktrees/${id}/mark-idle`, { method: 'POST', body: JSON.stringify({}) });
         } else if (action === 'push') {

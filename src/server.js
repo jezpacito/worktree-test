@@ -25,9 +25,18 @@ function createApp() {
 
   app.post('/api/config', (req, res) => {
     const s = state.load();
-    const { repoPath, devCommand, portEnvVar, envFileName, startPort, worktreesRoot, pricing, costThreshold } = req.body;
+    const { repoPath, appDir, devCommand, portEnvVar, envFileName, startPort, worktreesRoot, pricing, costThreshold } = req.body;
     if (repoPath && !fs.existsSync(path.join(repoPath, '.git'))) {
       return res.status(400).json({ error: `${repoPath} does not look like a git repo root (no .git found)` });
+    }
+    // Validate the app subfolder eagerly so a bad value is rejected here rather
+    // than surfacing much later as a failed worktree creation.
+    if (appDir !== undefined && appDir !== '') {
+      try {
+        wt.resolveAppPath(repoPath || s.config.repoPath || '/', appDir);
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
     }
     let parsedPricing;
     if (pricing !== undefined && pricing !== '') {
@@ -40,6 +49,7 @@ function createApp() {
     s.config = {
       ...s.config,
       ...(repoPath ? { repoPath } : {}),
+      ...(appDir !== undefined ? { appDir: String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '') } : {}),
       ...(devCommand ? { devCommand } : {}),
       ...(portEnvVar ? { portEnvVar } : {}),
       ...(envFileName ? { envFileName } : {}),
@@ -115,10 +125,11 @@ function createApp() {
 
     try {
       const worktreePath = await wt.createWorktree({ repoPath, worktreesRoot, branch, baseRef });
-      const nmResult = await wt.linkNodeModules({ repoPath, worktreePath });
+      const nmResult = await wt.linkNodeModules({ repoPath, worktreePath, appDir: s.config.appDir });
       const port = await allocatePort(s);
       wt.copyAndPatchEnvFile({
         repoPath, worktreePath,
+        appDir: s.config.appDir,
         envFileName: s.config.envFileName,
         portEnvVar: s.config.portEnvVar,
         port
@@ -141,6 +152,7 @@ function createApp() {
       const launch = await session.launchSession({
         worktreeId: id,
         worktreePath,
+        appPath: wt.resolveAppPath(worktreePath, s.config.appDir),
         port,
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
@@ -175,8 +187,9 @@ function createApp() {
     try {
       if (w.port == null) w.port = await allocatePort(s);
 
-      if (!fs.existsSync(path.join(w.path, 'node_modules'))) {
-        w.nodeModules = await wt.linkNodeModules({ repoPath: s.config.repoPath, worktreePath: w.path });
+      const appPath = wt.resolveAppPath(w.path, s.config.appDir);
+      if (!fs.existsSync(path.join(appPath, 'node_modules'))) {
+        w.nodeModules = await wt.linkNodeModules({ repoPath: s.config.repoPath, worktreePath: w.path, appDir: s.config.appDir });
       }
 
       // Patch the env file only on first adoption -- later starts leave any
@@ -185,6 +198,7 @@ function createApp() {
         wt.copyAndPatchEnvFile({
           repoPath: s.config.repoPath,
           worktreePath: w.path,
+          appDir: s.config.appDir,
           envFileName: s.config.envFileName,
           portEnvVar: s.config.portEnvVar,
           port: w.port
@@ -197,6 +211,7 @@ function createApp() {
       const launch = await session.launchSession({
         worktreeId: w.id,
         worktreePath: w.path,
+        appPath,
         port: w.port,
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
@@ -293,12 +308,46 @@ function createApp() {
     }
   });
 
+  // Just a shell at this worktree's app folder, with the port env var preset.
+  // Deliberately does not change status or allocate anything -- it is not a session.
+  app.post('/api/worktrees/:id/terminal', async (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
+    try {
+      const result = await session.openTerminal({
+        worktreeId: w.id,
+        worktreePath: w.path,
+        appPath: wt.resolveAppPath(w.path, s.config.appDir),
+        port: w.port,
+        portEnvVar: s.config.portEnvVar,
+        devCommand: s.config.devCommand
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/worktrees/:id/vscode', async (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
+    try {
+      res.json(await session.openInVsCode({ worktreePath: w.path }));
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.post('/api/worktrees/:id/reinstall', async (req, res) => {
     const s = state.load();
     const w = s.worktrees[req.params.id];
     if (!w) return res.status(404).json({ error: 'unknown worktree id' });
     try {
-      await wt.reinstallDeps({ worktreePath: w.path });
+      await wt.reinstallDeps({ worktreePath: w.path, appDir: s.config.appDir });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

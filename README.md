@@ -12,14 +12,28 @@ project's own config files and without needing admin rights on Windows.
   that's inherent to how git worktrees work, not something this tool adds.
 - **Creates a worktree per task/branch**, in a sibling `.worktrees/` folder
   next to your repo (configurable).
+- **Works with apps in a subfolder.** If your `package.json`, `node_modules`
+  and `.env.development` live in something like `src/renderer` rather than at
+  the git root, set **App subfolder** in Settings to that relative path. The
+  dev command runs there, the env file is copied there, and `node_modules` is
+  junctioned there. Git operations (branch, commit, worktree add/remove) still
+  happen at the worktree root, which is where they belong. Leave it blank for
+  a plain single-package repo.
 - **Skips the `npm install` tax.** Each new worktree's `node_modules` is a
   Windows *directory junction* (`mklink /J`) pointing at your main repo's
   already-installed `node_modules`. Junctions, unlike symlinks, don't require
   admin rights or Developer Mode on Windows. If a branch changes dependencies,
   use "Reinstall deps" on that one worktree to swap the junction for a real
   `npm install`.
-- **Copies and patches `.env.development`** into the new worktree, setting
-  your port env var (e.g. `PORT`) to the port assigned to that worktree.
+- **Copies and patches `.env.development`** into the new worktree (into the
+  app subfolder, if you set one), setting your port env var (e.g. `PORT`) to
+  the port assigned to that worktree.
+- **Opens a terminal or VS Code at any worktree.** Every row has a
+  **Terminal** button (Windows Terminal if installed, otherwise PowerShell)
+  that drops you into that worktree's app folder with the port env var already
+  exported, so `npm run dev` just works -- and a **VS Code** button that opens
+  the worktree root in your editor. Neither is tracked as a session: closing
+  the terminal doesn't change the row's status.
 - **Allocates ports starting at 5002**, incrementing for each new worktree,
   and reclaims a port once you remove that worktree.
 - **Launches a real terminal per worktree** (Windows Terminal if installed,
@@ -86,7 +100,11 @@ browser (or a VS Code Simple Browser tab).
 
 In **Settings**, fill in:
 - **Project path** -- the root of your main repo checkout (where `.git` lives).
-- **Dev command** -- e.g. `npm run dev`.
+- **App subfolder** -- optional, relative to the project path. Set it to
+  `src/renderer` for a layout like `root-project/src/renderer`, i.e. wherever
+  the `package.json` with your `dev` script lives. Leave blank if that's the
+  repo root. A hint under the form shows the full path it resolves to.
+- **Dev command** -- e.g. `npm run dev`. Runs inside the app subfolder.
 - **Port env var** -- whatever your dev server reads for its port, e.g. `PORT`,
   `VITE_PORT`, `NEXT_PUBLIC_PORT`.
 - **Env file name** -- e.g. `.env.development`.
@@ -111,6 +129,12 @@ Then, for each new task:
 
 To start an existing worktree without Claude (just the dev server), find its
 row in the table, untick the per-row **Claude** checkbox, and click **Start**.
+
+To run things by hand instead, click **Terminal** on that row -- you land in
+the worktree's app folder with the port already set -- or **VS Code** to open
+the worktree in your editor. **Terminal** and **VS Code** are Windows-only and
+Windows/macOS/Linux respectively; **VS Code** needs the `code` CLI on your
+PATH (in VS Code: *Shell Command: Install 'code' command in PATH*).
 
 ## Running the tests
 
@@ -149,3 +173,9 @@ both as a rough signal, not a billing source of truth.
   re-auth `gh` occasionally outside this tool.
 - If your dev command needs more than one env var patched (not just the
   port), extend `copyAndPatchEnvFile` in `src/worktrees.js`.
+- Only one **App subfolder** is supported. A repo with several independently
+  runnable packages needs one dashboard config per package, or a change to
+  make `appDir` a per-worktree field.
+- Worktrees created *before* you set **App subfolder** have their env file at
+  the old location. The env file is only written on first adoption, so fix
+  those by hand or remove and recreate the worktree.

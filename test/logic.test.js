@@ -162,3 +162,94 @@ test('reconcile startup: downgrades leftover running status and flags missing fo
 test('norm: trailing separators and case', () => {
   assert.equal(norm('/a/b/'), norm('/a/b'));
 });
+
+// ---- appDir support ------------------------------------------------------
+
+const session = require('../src/session');
+
+function tmpdir(name) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), name));
+}
+
+test('resolveAppPath: blank appDir resolves to the worktree root', () => {
+  assert.strictEqual(wt.resolveAppPath('/wt/feature', ''), path.resolve('/wt/feature'));
+  assert.strictEqual(wt.resolveAppPath('/wt/feature', undefined), path.resolve('/wt/feature'));
+});
+
+test('resolveAppPath: nested appDir joins under the worktree root', () => {
+  assert.strictEqual(
+    wt.resolveAppPath('/wt/feature', 'src/renderer'),
+    path.resolve('/wt/feature/src/renderer')
+  );
+});
+
+test('resolveAppPath: rejects an appDir that escapes the worktree', () => {
+  assert.throws(() => wt.resolveAppPath('/wt/feature', '../elsewhere'), /outside/i);
+  assert.throws(() => wt.resolveAppPath('/wt/feature', '/abs/path'), /relative/i);
+});
+
+test('copyAndPatchEnvFile: writes into the appDir, creating it, not the worktree root', () => {
+  const repo = tmpdir('wtd-repo-');
+  const worktree = tmpdir('wtd-wt-');
+  fs.mkdirSync(path.join(repo, 'src', 'renderer'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'renderer', '.env.development'), 'API_URL=x\nPORT=3000\n');
+
+  const r = wt.copyAndPatchEnvFile({
+    repoPath: repo, worktreePath: worktree, appDir: 'src/renderer',
+    envFileName: '.env.development', portEnvVar: 'PORT', port: 5005
+  });
+
+  const dest = path.join(worktree, 'src', 'renderer', '.env.development');
+  assert.strictEqual(r.dest, dest);
+  assert.strictEqual(fs.readFileSync(dest, 'utf8'), 'API_URL=x\nPORT=5005\n');
+  assert.strictEqual(fs.existsSync(path.join(worktree, '.env.development')), false);
+});
+
+test('copyAndPatchEnvFile: appends the port var when the source has none', () => {
+  const repo = tmpdir('wtd-repo-');
+  const worktree = tmpdir('wtd-wt-');
+  fs.mkdirSync(path.join(repo, 'app'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'app', '.env.development'), 'API_URL=x\n');
+
+  wt.copyAndPatchEnvFile({
+    repoPath: repo, worktreePath: worktree, appDir: 'app',
+    envFileName: '.env.development', portEnvVar: 'PORT', port: 5006
+  });
+
+  assert.strictEqual(
+    fs.readFileSync(path.join(worktree, 'app', '.env.development'), 'utf8'),
+    'API_URL=x\nPORT=5006\n'
+  );
+});
+
+test('buildPowerShellScript: dev job runs in the appDir, claude pane in the worktree root', () => {
+  const script = session.buildPowerShellScript({
+    worktreePath: 'C:\\wt\\feature', appPath: 'C:\\wt\\feature\\src\\renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', withClaude: true
+  });
+  assert.match(script, /Set-Location -LiteralPath "C:\\wt\\feature"/);
+  assert.match(script, /-ArgumentList "C:\\wt\\feature\\src\\renderer"/);
+});
+
+test('buildPowerShellScript: dev-only mode runs the dev command from the appDir', () => {
+  const script = session.buildPowerShellScript({
+    worktreePath: 'C:\\wt\\feature', appPath: 'C:\\wt\\feature\\src\\renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', withClaude: false
+  });
+  assert.match(script, /Set-Location -LiteralPath "C:\\wt\\feature\\src\\renderer"[\s\S]*npm run dev/);
+});
+
+test('buildTerminalScript: opens at the appDir with the port env var preset', () => {
+  const script = session.buildTerminalScript({
+    worktreePath: 'C:\\wt\\feature', appPath: 'C:\\wt\\feature\\src\\renderer',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev'
+  });
+  assert.match(script, /Set-Location -LiteralPath "C:\\wt\\feature\\src\\renderer"/);
+  assert.match(script, /\$env:PORT = "5005"/);
+  assert.match(script, /npm run dev/);
+  // no dev server is started for the user, and nothing calls back to the dashboard
+  assert.doesNotMatch(script, /Start-Job/);
+  assert.doesNotMatch(script, /Invoke-RestMethod/);
+});

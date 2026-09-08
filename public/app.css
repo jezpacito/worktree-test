@@ -85,3 +85,10 @@ button.link {
 table.mini { font-size: 12px; }
 table.mini th, table.mini td { padding: 4px 6px; }
 @media (max-width: 720px) { .detail-grid { grid-template-columns: 1fr; } }
+
+.hint {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  word-break: break-all;
+}
