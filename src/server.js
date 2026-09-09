@@ -12,9 +12,10 @@ const usage = require('./usage');
 const { reconcile } = require('./reconcile');
 
 // What this machine can actually do, so the UI only offers real actions.
-// Opening a terminal is implemented for Windows Terminal / PowerShell only.
+// Windows opens PowerShell; WSL opens a Windows Terminal tab back into the
+// distro. A plain Linux or macOS box has no window to open.
 function capabilities() {
-  return { openTerminal: process.platform === 'win32' };
+  return { openTerminal: session.launcherKind() !== 'posix' };
 }
 
 function createApp() {
@@ -148,6 +149,7 @@ function createApp() {
       const record = {
         id, branch, path: worktreePath, port,
         baseRef: baseRef || 'HEAD',
+        claudeSessionId: crypto.randomUUID(),
         status: 'created',
         tracked: true,
         adopted: true,
@@ -167,7 +169,11 @@ function createApp() {
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
-        claudeArgs,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: record.claudeSessionId,
+          hasTranscript: usage.transcriptExists(worktreePath, record.claudeSessionId),
+          extra: claudeArgs
+        }),
         withClaude: wantClaude
       });
 
@@ -215,6 +221,9 @@ function createApp() {
         });
         w.adopted = true;
       }
+      // Worktrees created before this existed -- and discovered ones -- get an
+      // id on their first Claude launch from here.
+      if (wantClaude && !w.claudeSessionId) w.claudeSessionId = crypto.randomUUID();
       w.tracked = true;
       state.save(s);
 
@@ -226,7 +235,11 @@ function createApp() {
         portEnvVar: s.config.portEnvVar,
         devCommand: s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
-        claudeArgs: req.body.claudeArgs,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: w.claudeSessionId,
+          hasTranscript: usage.transcriptExists(w.path, w.claudeSessionId),
+          extra: req.body.claudeArgs
+        }),
         withClaude: wantClaude
       });
 
@@ -238,6 +251,17 @@ function createApp() {
     } catch (e) {
       res.status(500).json({ error: e.message, detail: e.stderr || e.stdout || null });
     }
+  });
+
+  // Drop this worktree's Claude session id so the next Start begins a fresh
+  // conversation. The old transcript is left alone -- its cost still counts.
+  app.post('/api/worktrees/:id/new-session', (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    w.claudeSessionId = crypto.randomUUID();
+    state.save(s);
+    res.json({ claudeSessionId: w.claudeSessionId });
   });
 
   // "I closed that terminal myself" -- reset a running record to idle.
@@ -335,6 +359,33 @@ function createApp() {
         devCommand: s.config.devCommand
       });
       res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Open just this worktree's Claude session -- no dev server, no port, no
+  // status change. Resumes the same conversation Start would.
+  app.post('/api/worktrees/:id/claude', async (req, res) => {
+    const s = state.load();
+    const w = s.worktrees[req.params.id];
+    if (!w) return res.status(404).json({ error: 'unknown worktree id' });
+    if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
+    try {
+      if (!w.claudeSessionId) {
+        w.claudeSessionId = crypto.randomUUID();
+        state.save(s);
+      }
+      const result = await session.openClaude({
+        worktreeId: w.id,
+        worktreePath: w.path,
+        claudeArgs: session.claudeArgsFor({
+          claudeSessionId: w.claudeSessionId,
+          hasTranscript: usage.transcriptExists(w.path, w.claudeSessionId),
+          extra: req.body.claudeArgs
+        })
+      });
+      res.json({ ...result, claudeSessionId: w.claudeSessionId });
     } catch (e) {
       res.status(400).json({ error: e.message });
     }

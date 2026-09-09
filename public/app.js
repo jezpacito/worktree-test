@@ -201,6 +201,9 @@ function rowHtml(w) {
   const u = w.usage || {};
   const open = expanded.has(w.id);
   const from = w.baseRef ? `from ${esc(w.baseRef)}` : (w.tracked ? '' : 'found on disk');
+  const sess = w.claudeSessionId
+    ? `<span class="tag" title="Claude session ${esc(w.claudeSessionId)}. Start resumes it once it has been used.">resumes ${esc(w.claudeSessionId.slice(0, 8))}</span>`
+    : '';
 
   const cost = u.available
     ? `<button class="cost-toggle" data-action="toggle-cost" data-id="${w.id}" aria-expanded="${open}">
@@ -216,7 +219,7 @@ function rowHtml(w) {
     <div class="row-grid">
       <div>
         <div class="cell-branch-name" title="${esc(w.branch || '')}">${esc(w.branch || '(unknown)')}</div>
-        ${from ? `<div class="cell-branch-from">${from}</div>` : ''}
+        ${from || sess ? `<div class="cell-branch-from">${from}${from && sess ? ' · ' : ''}${sess}</div>` : ''}
       </div>
       <div class="cell-path" title="${esc(w.path)}">${esc(shortPath(w.path))}</div>
       <div class="cell-port">${portCell(w)}</div>
@@ -239,6 +242,7 @@ function menuHtml(w) {
   }
   if (w.status !== 'missing') {
     if (config.capabilities?.openTerminal) {
+      items.push(`<button data-action="claude" data-id="${w.id}" title="Opens the Claude session for this worktree on its own -- no dev server, no port, nothing committed on exit. Close the worktree's other window first if one is already open on this session.">Open Claude session</button>`);
       items.push(`<button data-action="terminal" data-id="${w.id}">Open terminal</button>`);
     }
     items.push(`<button data-action="vscode" data-id="${w.id}">Open in VS Code</button>`);
@@ -251,6 +255,9 @@ function menuHtml(w) {
   }
   if (w.status !== 'missing') {
     items.push(`<button data-action="reinstall" data-id="${w.id}">Reinstall deps</button>`);
+  }
+  if (w.claudeSessionId && !live) {
+    items.push(`<button data-action="new-session" data-id="${w.id}">Start a fresh Claude session</button>`);
   }
   if (w.prUrl) items.push(`<button data-action="open-pr" data-id="${w.id}">View pull request</button>`);
   items.push('<div class="sep"></div>');
@@ -408,6 +415,8 @@ document.addEventListener('click', async (e) => {
       await api(`/api/worktrees/${id}/start`, { method: 'POST', body: JSON.stringify({ withClaude }) });
     } else if (action === 'mark-idle') {
       await api(`/api/worktrees/${id}/mark-idle`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'claude') {
+      await api(`/api/worktrees/${id}/claude`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'terminal') {
       await api(`/api/worktrees/${id}/terminal`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'vscode') {
@@ -417,6 +426,12 @@ document.addEventListener('click', async (e) => {
       window.open(r.url, '_blank', 'noopener');
     } else if (action === 'commit') {
       await api(`/api/worktrees/${id}/commit`, { method: 'POST', body: JSON.stringify({}) });
+    } else if (action === 'new-session') {
+      if (!confirm(`Next Start on ${w.branch} begins a new Claude conversation instead of resuming the current one. The old transcript is kept. Continue?`)) {
+        btn.disabled = false;
+        return;
+      }
+      await api(`/api/worktrees/${id}/new-session`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'reinstall') {
       await api(`/api/worktrees/${id}/reinstall`, { method: 'POST', body: JSON.stringify({}) });
     } else if (action === 'remove') {

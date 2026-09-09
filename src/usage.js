@@ -72,16 +72,26 @@ function collectUsage(obj, perModel, contextModel) {
   }
 }
 
-function findProjectLogDir(worktreePath) {
-  if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) return null;
+function findProjectLogDir(worktreePath, projectsDir = CLAUDE_PROJECTS_DIR) {
+  if (!fs.existsSync(projectsDir)) return null;
   const encoded = encodeProjectPath(worktreePath);
-  const candidates = fs.readdirSync(CLAUDE_PROJECTS_DIR);
+  const candidates = fs.readdirSync(projectsDir);
   let match = candidates.find((c) => c === encoded || c.includes(encoded));
   if (!match) {
     const base = path.basename(worktreePath);
     match = candidates.find((c) => c.includes(base));
   }
-  return match ? path.join(CLAUDE_PROJECTS_DIR, match) : null;
+  return match ? path.join(projectsDir, match) : null;
+}
+
+// Has this worktree's Claude session actually been written to disk? Resuming a
+// session id the CLI has never seen fails with "No conversation found", so the
+// launcher asks this before choosing between --session-id and --resume.
+function transcriptExists(worktreePath, sessionId, projectsDir = CLAUDE_PROJECTS_DIR) {
+  if (!sessionId) return false;
+  const dir = findProjectLogDir(worktreePath, projectsDir);
+  if (!dir) return false;
+  return fs.existsSync(path.join(dir, `${sessionId}.jsonl`));
 }
 
 // Cheap re-parse guard: key a cached result by the set of (file, mtime, size)
@@ -249,6 +259,7 @@ function _resetCache() {
 
 module.exports = {
   usageForWorktree,
+  transcriptExists,
   totalTokens,
   costFor,
   priceForModel,

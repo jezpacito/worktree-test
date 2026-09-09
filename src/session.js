@@ -15,6 +15,7 @@
 
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { SESSIONS_DIR } = require('./state');
 
@@ -25,6 +26,131 @@ function which(cmd) {
       resolve(err ? null : stdout.split(/\r?\n/)[0].trim());
     });
   });
+}
+
+// Which launcher to use. Windows gets PowerShell; WSL gets a Windows Terminal
+// tab that re-enters the distro, so the dev server and Claude stay Linux
+// processes in the Linux filesystem while you still get a real window; anything
+// else has no window to open and falls back to a detached shell.
+function launcherKind({ platform = process.platform, release = os.release() } = {}) {
+  if (platform === 'win32') return 'win32';
+  if (platform === 'linux' && /microsoft/i.test(release)) return 'wsl';
+  return 'posix';
+}
+
+function bashQ(p) {
+  return String(p).replace(/(["$`\\])/g, '\\$1');
+}
+
+// Bash equivalents of the PowerShell launchers above, for the WSL window.
+function buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
+  const wt = bashQ(worktreePath);
+  const app = bashQ(appPath || worktreePath);
+
+  if (!withClaude) {
+    return `#!/usr/bin/env bash
+echo "== worktree-dashboard session (dev server only) =="
+echo "Worktree: ${wt}"
+echo "Dev server runs in: ${app}"
+echo "Dev server port: ${port} (env ${portEnvVar})"
+echo "Close this window or press Ctrl+C to stop the dev server and free the port."
+echo
+cd "${app}" || exit 1
+export ${portEnvVar}="${port}"
+${devCommand}
+`;
+  }
+
+  return `#!/usr/bin/env bash
+echo "== worktree-dashboard session =="
+echo "Worktree: ${wt}"
+echo "Dev server runs in: ${app}"
+echo "Dev server port: ${port} (env ${portEnvVar})"
+echo
+
+( cd "${app}" && ${portEnvVar}="${port}" ${devCommand} ) &
+DEV_PID=$!
+echo "Dev server started in the background (pid $DEV_PID)."
+echo "Exit Claude (Ctrl+D or 'exit') to stop it and auto-commit."
+echo
+
+cd "${wt}" || exit 1
+claude ${claudeArgs || ''}
+
+echo
+echo "Claude session ended. Stopping dev server..."
+kill $DEV_PID 2>/dev/null
+wait $DEV_PID 2>/dev/null
+
+if curl -s -m 5 -X POST "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit" > /dev/null; then
+  echo "Dashboard notified: committing changes (not pushing)."
+else
+  echo "Could not reach the dashboard. Use 'Commit now' there instead."
+fi
+echo
+echo "Port ${port} is now free. You can close this window."
+`;
+}
+
+function buildBashTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }) {
+  const wt = bashQ(worktreePath);
+  const app = bashQ(appPath || worktreePath);
+  const portLine = port == null
+    ? 'echo "No port assigned to this worktree yet."'
+    : `export ${portEnvVar}="${port}"\necho "${portEnvVar} is set to ${port} for this shell."`;
+
+  return `#!/usr/bin/env bash
+cd "${app}" || exit 1
+${portLine}
+echo "== worktree-dashboard terminal =="
+echo "Worktree root: ${wt}"
+echo "You are in:    ${app}"
+echo
+echo "Run the dev server with:  ${devCommand || 'npm run dev'}"
+echo "The dashboard is not tracking this shell."
+echo
+`;
+}
+
+function buildBashClaudeScript({ worktreePath, claudeArgs }) {
+  const wt = bashQ(worktreePath);
+  return `#!/usr/bin/env bash
+cd "${wt}" || exit 1
+echo "== worktree-dashboard: claude session only =="
+echo "Worktree: ${wt}"
+echo "No dev server started, and nothing is committed when you exit."
+echo
+claude ${claudeArgs || ''}
+`;
+}
+
+// argv for opening that bash script in a real window from inside WSL.
+// `exec bash` at the end is the -NoExit equivalent: the window stays put.
+function wslWindowArgs({ scriptPath, title, distro, hasWindowsTerminal }) {
+  const inner = `bash "${scriptPath}"; exec bash`;
+  const wslArgs = ['wsl.exe', '-d', distro, '--', 'bash', '-lc', inner];
+  return hasWindowsTerminal
+    ? ['new-tab', '--title', title, ...wslArgs]
+    : ['/c', 'start', '', ...wslArgs];
+}
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// Build the argument string for the `claude` invocation. The dashboard assigns
+// each worktree a session id up front rather than scraping one out of the
+// transcripts afterwards: the first launch names the session with --session-id,
+// and every later launch reopens it with --resume. Which of the two applies is
+// decided by whether the transcript is actually on disk, because a session the
+// user opened and closed without saying anything never gets written, and
+// resuming it would fail.
+function claudeArgsFor({ claudeSessionId, hasTranscript, extra } = {}) {
+  const tail = (extra || '').trim();
+  if (!claudeSessionId) return tail;
+  if (!UUID_RE.test(claudeSessionId)) {
+    throw new Error(`Claude session id must be a UUID, got: ${claudeSessionId}`);
+  }
+  const flag = hasTranscript ? '--resume' : '--session-id';
+  return `${flag} ${claudeSessionId}${tail ? ' ' + tail : ''}`;
 }
 
 function q(p) {
@@ -125,6 +251,59 @@ Write-Host ""
 `;
 }
 
+// Just the Claude session for this worktree -- no dev server, no port, and no
+// auto-commit callback. For reading back what a session did without committing
+// to a full Start. The cwd is the worktree root, which is what keys Claude's
+// transcript directory, so --resume finds the right conversation.
+function buildClaudeScript({ worktreePath, claudeArgs }) {
+  const wtPath = q(worktreePath);
+  return `
+$ErrorActionPreference = 'Continue'
+Set-Location -LiteralPath "${wtPath}"
+
+Write-Host "== worktree-dashboard: claude session only ==" -ForegroundColor Cyan
+Write-Host "Worktree: ${wtPath}"
+Write-Host "No dev server started, and nothing is committed when you exit." -ForegroundColor DarkGray
+Write-Host ""
+
+claude ${claudeArgs || ''}
+`;
+}
+
+async function openClaude({ worktreeId, worktreePath, claudeArgs }) {
+  const kind = launcherKind();
+  if (kind === 'posix') {
+    throw new Error('Opening a Claude session window needs Windows or WSL.');
+  }
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
+  if (kind === 'wsl') {
+    const base = path.join(SESSIONS_DIR, `${worktreeId}-claude`);
+    fs.writeFileSync(base, buildBashClaudeScript({ worktreePath, claudeArgs }), 'utf8');
+    const child = await spawnWslWindow(base, `claude:${worktreeId}`);
+    child.unref();
+    return { pid: child.pid, scriptPath: base + '.sh' };
+  }
+
+  const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}-claude.ps1`);
+  fs.writeFileSync(scriptPath, buildClaudeScript({ worktreePath, claudeArgs }), 'utf8');
+  const child = await spawnWindow(scriptPath, `claude:${worktreeId}`);
+  child.unref();
+  return { pid: child.pid, scriptPath };
+}
+
+// Open a bash script in a real window from inside WSL, via Windows Terminal
+// when it is installed and `cmd /c start` otherwise.
+async function spawnWslWindow(script, title) {
+  const scriptPath = script + '.sh';
+  fs.renameSync(script, scriptPath);
+  fs.chmodSync(scriptPath, 0o755);
+  const wtExe = await which('wt.exe');
+  const distro = process.env.WSL_DISTRO_NAME || 'Ubuntu';
+  const args = wslWindowArgs({ scriptPath, title, distro, hasWindowsTerminal: !!wtExe });
+  return spawn(wtExe || 'cmd.exe', args, { detached: true, stdio: 'ignore' });
+}
+
 // Windows Terminal when it's installed (nicer tabs), plain PowerShell otherwise.
 // Both keep the window open after the script finishes (-NoExit).
 async function spawnWindow(scriptPath, title) {
@@ -138,16 +317,26 @@ async function spawnWindow(scriptPath, title) {
 }
 
 async function openTerminal({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand }) {
-  if (process.platform !== 'win32') {
-    throw new Error('Opening a terminal is only wired up for Windows (Windows Terminal / PowerShell).');
+  const kind = launcherKind();
+  if (kind === 'posix') {
+    throw new Error('Opening a terminal needs Windows or WSL.');
   }
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  const cwd = appPath || worktreePath;
+
+  if (kind === 'wsl') {
+    const base = path.join(SESSIONS_DIR, `${worktreeId}-terminal`);
+    fs.writeFileSync(base, buildBashTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }), 'utf8');
+    const child = await spawnWslWindow(base, `term:${worktreeId}`);
+    child.unref();
+    return { pid: child.pid, scriptPath: base + '.sh', cwd };
+  }
+
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}-terminal.ps1`);
   fs.writeFileSync(scriptPath, buildTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }), 'utf8');
-
   const child = await spawnWindow(scriptPath, `term:${worktreeId}`);
   child.unref();
-  return { pid: child.pid, scriptPath, cwd: appPath || worktreePath };
+  return { pid: child.pid, scriptPath, cwd };
 }
 
 // Open the worktree ROOT in VS Code -- you want the whole branch checkout in the
@@ -173,12 +362,22 @@ async function openInVsCode({ worktreePath }) {
 
 async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, claudeArgs, withClaude = true }) {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  const kind = launcherKind();
+
+  if (kind === 'wsl') {
+    const base = path.join(SESSIONS_DIR, String(worktreeId));
+    fs.writeFileSync(base, buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }), 'utf8');
+    const wslChild = await spawnWslWindow(base, `wt:${worktreeId}`);
+    wslChild.unref();
+    return { pid: wslChild.pid, scriptPath: base + '.sh' };
+  }
+
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}.ps1`);
   const script = buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude });
   fs.writeFileSync(scriptPath, script, 'utf8');
 
   let child;
-  if (process.platform === 'win32') {
+  if (kind === 'win32') {
     child = await spawnWindow(scriptPath, `wt:${worktreeId}`);
   } else if (!withClaude) {
     // Non-Windows, dev-only: run the dev server in the foreground, no callback.
@@ -195,4 +394,8 @@ async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvV
   return { pid: child.pid, scriptPath };
 }
 
-module.exports = { launchSession, openTerminal, openInVsCode, buildPowerShellScript, buildTerminalScript };
+module.exports = {
+  launchSession, openTerminal, openInVsCode, openClaude, claudeArgsFor, launcherKind,
+  buildPowerShellScript, buildTerminalScript, buildClaudeScript,
+  buildBashSessionScript, buildBashTerminalScript, buildBashClaudeScript, wslWindowArgs
+};
