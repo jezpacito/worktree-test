@@ -242,6 +242,8 @@ textarea { font-family: var(--font-mono); font-size: var(--text-sm); color: var(
 }
 .settings-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-4); }
 
+.field .hint { font-size: var(--text-sm); color: var(--fg-3); line-height: 1.4; }
+.field .hint code { font-family: var(--font-mono); color: var(--fg-2); }
 .resolved { font-size: var(--text-sm); color: var(--fg-3); }
 .resolved code { font-family: var(--font-mono); color: var(--fg-2); word-break: break-all; }
 

@@ -78,9 +78,10 @@
             <span>App subfolder (optional)</span>
             <input id="cfgAppDir" placeholder="src/renderer" />
           </label>
-          <label class="field" title="Run inside the app subfolder, in a terminal opened for each worktree.">
-            <span>Dev command</span>
-            <input id="cfgDevCommand" placeholder="npm run dev" />
+          <label class="field" title="Default dev command for new worktrees; each worktree can override it. Some dev servers (Vite) ignore the port env var -- write {port} in the command and it is substituted with that worktree's port, e.g. npm run dev -- --port {port}.">
+            <span>Dev command (default)</span>
+            <input id="cfgDevCommand" placeholder="npm run dev" list="devCommandOptions" />
+            <small class="hint">Use <code>{port}</code> if your dev server ignores the env var (Vite does).</small>
           </label>
           <label class="field" title="The env var your dev server reads its port from. Each worktree gets its own port in this var.">
             <span>Port env var</span>
@@ -127,9 +128,18 @@
             <span>Base ref (optional)</span>
             <input id="newBaseRef" placeholder="main" />
           </label>
+          <label class="field narrow" title="Pre-filled with the next free port. Change it to pin this worktree to a port you choose.">
+            <span>Port</span>
+            <input id="newPort" type="number" placeholder="auto" />
+          </label>
+          <label class="field" title="Overrides the default dev command for this worktree only. Pick one of your project's npm scripts, or type anything. {port} is substituted with the port above.">
+            <span>Dev command</span>
+            <input id="newDevCommand" placeholder="npm run dev" list="devCommandOptions" />
+          </label>
           <label class="checkbox" title="Ticked: the terminal runs the dev server in the background and Claude in the foreground, and auto-commits when you exit Claude. Unticked: dev server only.">
             <input type="checkbox" id="newWithClaude" checked /> Run Claude in this session
           </label>
+          <datalist id="devCommandOptions"></datalist>
           <button class="btn btn-primary" id="createWorktree">Create worktree</button>
         </div>
         <p class="form-note" id="createStatus" style="margin:12px 0 0"></p>

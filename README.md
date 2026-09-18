@@ -56,7 +56,15 @@ project's own config files and without needing admin rights on Windows.
   worktree root in your editor. Neither is tracked as a session: closing the
   terminal doesn't change the row's status.
 - **Allocates ports starting at 5002**, incrementing for each new worktree,
-  and reclaims a port once you remove that worktree.
+  and reclaims a port once you remove that worktree. The New worktree form
+  pre-fills the next free port; overwrite it to pin a worktree to a port you
+  choose. A port that is out of range, already assigned, or actually in use on
+  the machine is rejected before the worktree is created.
+- **Per-worktree dev command.** Settings holds the project default; the New
+  worktree form starts from that default and lets you override it for one
+  worktree -- useful when a project has `npm run dev`, `npm run dev-mt`,
+  `npm run dev-tt` and so on. The box suggests your project's own npm scripts.
+  Whatever you pick is remembered, so later launches of that worktree reuse it.
 - **Launches a real terminal per worktree** (Windows Terminal if installed,
   otherwise a plain PowerShell window) that starts your dev server in the
   background and runs `claude` in the foreground. The dev server -- and the
@@ -138,7 +146,12 @@ npm start
 ```
 
 This starts the dashboard at `http://localhost:4999`. Open that in your
-browser (or a VS Code Simple Browser tab).
+browser (or a VS Code Simple Browser tab). If that port is taken or blocked on
+your machine, set another one:
+
+```bash
+WTD_PORT=5050 npm start
+```
 
 In **Settings**, fill in:
 - **Project path** -- the root of your main repo checkout (where `.git` lives).
@@ -146,9 +159,16 @@ In **Settings**, fill in:
   `src/renderer` for a layout like `root-project/src/renderer`, i.e. wherever
   the `package.json` with your `dev` script lives. Leave blank if that's the
   repo root. A hint under the form shows the full path it resolves to.
-- **Dev command** -- e.g. `npm run dev`. Runs inside the app subfolder.
+- **Dev command (default)** -- e.g. `npm run dev`. Runs inside the app
+  subfolder, and can be overridden per worktree when you create one.
+  Some dev servers ignore the port env var entirely -- **Vite is the common
+  case**: it reads `--port`, never `PORT`. Write `{port}` anywhere in the
+  command and it is replaced with that worktree's port, e.g.
+  `npm run dev -- --port {port}`. If your worktrees all start on the same
+  wrong port, this is the setting you want.
 - **Port env var** -- whatever your dev server reads for its port, e.g. `PORT`,
-  `VITE_PORT`, `NEXT_PUBLIC_PORT`.
+  `VITE_PORT`, `NEXT_PUBLIC_PORT`. Set in the terminal and written into the
+  env file for every worktree.
 - **Env file name** -- e.g. `.env.development`.
 - **Start port** -- defaults to `5002`.
 - **Cost alert threshold ($)** -- a worktree that has cost more than this
@@ -158,8 +178,11 @@ In **Settings**, fill in:
   used for model ids not listed. Seeded from the public Claude price list.
 
 Then, for each new task:
-1. Type a branch name (and optionally a base ref, default `HEAD`), leave
-   **Run Claude in this session** ticked, and click **Create worktree**.
+1. Type a branch name (and optionally a base ref, default `HEAD`). The
+   **Port** box is pre-filled with the next free port and **Dev command**
+   with your project default -- change either if this worktree needs a
+   different one. Leave **Run Claude in this session** ticked and click
+   **Create worktree**.
 2. A terminal opens with your dev server running in the background and
    `claude` running in the foreground. Run your company skill / do your work
    as normal.

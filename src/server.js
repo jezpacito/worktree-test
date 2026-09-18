@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 
 const state = require('./state');
-const { allocatePort } = require('./ports');
+const { allocatePort, findFreePort, validatePort } = require('./ports');
 const wt = require('./worktrees');
 const git = require('./git');
 const session = require('./session');
@@ -32,7 +32,11 @@ function createApp() {
 
   app.post('/api/config', (req, res) => {
     const s = state.load();
-    const { repoPath, appDir, devCommand, portEnvVar, envFileName, startPort, worktreesRoot, pricing, costThreshold } = req.body;
+    const { appDir, devCommand, portEnvVar, envFileName, startPort, pricing, costThreshold } = req.body;
+    // Normalized here rather than at each use site, so what lands in state.json
+    // is one absolute form no matter how the user typed it or which OS they are on.
+    const repoPath = wt.normalizeUserPath(req.body.repoPath);
+    const worktreesRoot = wt.normalizeUserPath(req.body.worktreesRoot);
     if (repoPath && !fs.existsSync(path.join(repoPath, '.git'))) {
       return res.status(400).json({ error: `${repoPath} does not look like a git repo root (no .git found)` });
     }
@@ -68,6 +72,24 @@ function createApp() {
     if (!s.nextPort || s.nextPort < s.config.startPort) s.nextPort = s.config.startPort;
     state.save(s);
     res.json({ ...s.config, capabilities: capabilities() });
+  });
+
+  // The port the next worktree would get, so the New Worktree form can pre-fill
+  // its port box. Peeked, not consumed -- nothing is reserved until you create.
+  app.get('/api/next-port', async (req, res) => {
+    const s = state.load();
+    try {
+      res.json({ port: await findFreePort(s) });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // npm scripts from the configured project, offered as dev-command suggestions.
+  app.get('/api/scripts', (req, res) => {
+    const s = state.load();
+    const scripts = wt.listScripts({ repoPath: s.config.repoPath, appDir: s.config.appDir });
+    res.json({ scripts, commands: scripts.map((n) => `npm run ${n}`) });
   });
 
   // ---- worktrees ---------------------------------------------------------
@@ -131,12 +153,27 @@ function createApp() {
     if (!branch) return res.status(400).json({ error: 'branch is required' });
     const wantClaude = withClaude !== false;
 
+    // A port you named yourself wins over auto-allocation. Validated before the
+    // worktree is created, so a rejected port does not leave a half-built one behind.
+    let port;
+    try {
+      port = req.body.port === undefined || req.body.port === null || req.body.port === ''
+        ? null
+        : await validatePort(req.body.port, s);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    // Blank means "use the project default from Settings"; anything else is
+    // remembered on the record so every later launch of this worktree reuses it.
+    const devCommand = (req.body.devCommand || '').trim();
+
     fs.mkdirSync(worktreesRoot, { recursive: true });
 
     try {
       const worktreePath = await wt.createWorktree({ repoPath, worktreesRoot, branch, baseRef });
       const nmResult = await wt.linkNodeModules({ repoPath, worktreePath, appDir: s.config.appDir });
-      const port = await allocatePort(s);
+      if (port == null) port = await allocatePort(s);
       wt.copyAndPatchEnvFile({
         repoPath, worktreePath,
         appDir: s.config.appDir,
@@ -148,6 +185,7 @@ function createApp() {
       const id = crypto.randomUUID();
       const record = {
         id, branch, path: worktreePath, port,
+        devCommand: devCommand || null,
         baseRef: baseRef || 'HEAD',
         claudeSessionId: crypto.randomUUID(),
         status: 'created',
@@ -167,7 +205,7 @@ function createApp() {
         appPath: wt.resolveAppPath(worktreePath, s.config.appDir),
         port,
         portEnvVar: s.config.portEnvVar,
-        devCommand: s.config.devCommand,
+        devCommand: devCommand || s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
         claudeArgs: session.claudeArgsFor({
           claudeSessionId: record.claudeSessionId,
@@ -233,7 +271,7 @@ function createApp() {
         appPath,
         port: w.port,
         portEnvVar: s.config.portEnvVar,
-        devCommand: s.config.devCommand,
+        devCommand: w.devCommand || s.config.devCommand,
         dashboardPort: s.config.dashboardPort,
         claudeArgs: session.claudeArgsFor({
           claudeSessionId: w.claudeSessionId,
@@ -356,7 +394,7 @@ function createApp() {
         appPath: wt.resolveAppPath(w.path, s.config.appDir),
         port: w.port,
         portEnvVar: s.config.portEnvVar,
-        devCommand: s.config.devCommand
+        devCommand: w.devCommand || s.config.devCommand
       });
       res.json(result);
     } catch (e) {

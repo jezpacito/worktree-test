@@ -42,10 +42,22 @@ function bashQ(p) {
   return String(p).replace(/(["$`\\])/g, '\\$1');
 }
 
+// A dev server that reads its port from an env var is the common case but not
+// the universal one -- Vite, for instance, ignores PORT entirely and only takes
+// --port, so the env var below is set faithfully and then ignored. Putting
+// {port} anywhere in the dev command substitutes the assigned port there, which
+// makes `npm run dev -- --port {port}` work for those servers.
+function applyPortPlaceholder(devCommand, port) {
+  const cmd = devCommand || '';
+  if (port == null) return cmd;
+  return cmd.replace(/\{port\}/g, String(port));
+}
+
 // Bash equivalents of the PowerShell launchers above, for the WSL window.
 function buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
   const wt = bashQ(worktreePath);
   const app = bashQ(appPath || worktreePath);
+  const cmd = applyPortPlaceholder(devCommand, port);
 
   if (!withClaude) {
     return `#!/usr/bin/env bash
@@ -57,7 +69,7 @@ echo "Close this window or press Ctrl+C to stop the dev server and free the port
 echo
 cd "${app}" || exit 1
 export ${portEnvVar}="${port}"
-${devCommand}
+${cmd}
 `;
   }
 
@@ -68,7 +80,7 @@ echo "Dev server runs in: ${app}"
 echo "Dev server port: ${port} (env ${portEnvVar})"
 echo
 
-( cd "${app}" && ${portEnvVar}="${port}" ${devCommand} ) &
+( cd "${app}" && ${portEnvVar}="${port}" ${cmd} ) &
 DEV_PID=$!
 echo "Dev server started in the background (pid $DEV_PID)."
 echo "Exit Claude (Ctrl+D or 'exit') to stop it and auto-commit."
@@ -95,6 +107,7 @@ echo "Port ${port} is now free. You can close this window."
 function buildBashTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }) {
   const wt = bashQ(worktreePath);
   const app = bashQ(appPath || worktreePath);
+  const cmd = applyPortPlaceholder(devCommand, port);
   const portLine = port == null
     ? 'echo "No port assigned to this worktree yet."'
     : `export ${portEnvVar}="${port}"\necho "${portEnvVar} is set to ${port} for this shell."`;
@@ -106,7 +119,7 @@ echo "== worktree-dashboard terminal =="
 echo "Worktree root: ${wt}"
 echo "You are in:    ${app}"
 echo
-echo "Run the dev server with:  ${devCommand || 'npm run dev'}"
+echo "Run the dev server with:  ${cmd || 'npm run dev'}"
 echo "The dashboard is not tracking this shell."
 echo
 `;
@@ -160,6 +173,7 @@ function q(p) {
 function buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
   const wtPath = q(worktreePath);
   const appDirPath = q(appPath || worktreePath);
+  const cmd = applyPortPlaceholder(devCommand, port);
 
   // Dev-server-only mode: no Claude, no background job, no auto-commit callback.
   // The dev command runs in the foreground so closing the window (or Ctrl+C)
@@ -178,7 +192,7 @@ Write-Host "Dev server port: ${port} (env ${portEnvVar})"
 Write-Host "No Claude session. Close this window or press Ctrl+C to stop the dev server and free the port." -ForegroundColor Cyan
 Write-Host ""
 
-${devCommand}
+${cmd}
 `;
   }
 
@@ -200,7 +214,7 @@ $devJob = Start-Job -ScriptBlock {
   Set-Location -LiteralPath $path
   Set-Item -Path "Env:$envVarName" -Value $port
   Invoke-Expression $cmd
-} -ArgumentList "${appDirPath}", "${portEnvVar}", "${port}", "${devCommand.replace(/"/g, '\\"')}"
+} -ArgumentList "${appDirPath}", "${portEnvVar}", "${port}", "${cmd.replace(/"/g, '\\"')}"
 
 Write-Host "Dev server starting in background (job id $($devJob.Id))..." -ForegroundColor DarkGray
 Write-Host "Starting Claude CLI session below. Exit it (Ctrl+D or 'exit') to stop the dev server and auto-commit." -ForegroundColor Cyan
@@ -232,6 +246,7 @@ Write-Host "Port ${port} is now free. You can close this window." -ForegroundCol
 function buildTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }) {
   const wtPath = q(worktreePath);
   const appDirPath = q(appPath || worktreePath);
+  const cmd = applyPortPlaceholder(devCommand, port);
   const portLine = port == null
     ? `Write-Host "No port assigned to this worktree yet." -ForegroundColor Yellow`
     : `$env:${portEnvVar} = "${port}"\nWrite-Host "${portEnvVar} is set to ${port} for this shell."`;
@@ -245,7 +260,7 @@ Write-Host "== worktree-dashboard terminal ==" -ForegroundColor Cyan
 Write-Host "Worktree root: ${wtPath}"
 Write-Host "You are in:    ${appDirPath}"
 Write-Host ""
-Write-Host "Run the dev server with:  ${devCommand || 'npm run dev'}" -ForegroundColor DarkGray
+Write-Host "Run the dev server with:  ${cmd || 'npm run dev'}" -ForegroundColor DarkGray
 Write-Host "The dashboard is not tracking this shell -- closing it won't change the worktree's status." -ForegroundColor DarkGray
 Write-Host ""
 `;
@@ -361,6 +376,7 @@ async function openInVsCode({ worktreePath }) {
 }
 
 async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, claudeArgs, withClaude = true }) {
+  const cmd = applyPortPlaceholder(devCommand, port);
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   const kind = launcherKind();
 
@@ -381,12 +397,12 @@ async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvV
     child = await spawnWindow(scriptPath, `wt:${worktreeId}`);
   } else if (!withClaude) {
     // Non-Windows, dev-only: run the dev server in the foreground, no callback.
-    child = spawn('bash', ['-lc', `cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${devCommand}`], {
+    child = spawn('bash', ['-lc', `cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${cmd}`], {
       detached: true, stdio: 'ignore'
     });
   } else {
     // Non-Windows fallback: just run claude directly in a detached shell (no split-pane dev job UI, best-effort).
-    child = spawn('bash', ['-lc', `cd "${worktreePath}" && (cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${devCommand} &) ; claude ${claudeArgs || ''}; curl -s -X POST http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit`], {
+    child = spawn('bash', ['-lc', `cd "${worktreePath}" && (cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${cmd} &) ; claude ${claudeArgs || ''}; curl -s -X POST http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit`], {
       detached: true, stdio: 'ignore'
     });
   }
@@ -397,5 +413,6 @@ async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvV
 module.exports = {
   launchSession, openTerminal, openInVsCode, openClaude, claudeArgsFor, launcherKind,
   buildPowerShellScript, buildTerminalScript, buildClaudeScript,
-  buildBashSessionScript, buildBashTerminalScript, buildBashClaudeScript, wslWindowArgs
+  buildBashSessionScript, buildBashTerminalScript, buildBashClaudeScript, wslWindowArgs,
+  applyPortPlaceholder
 };

@@ -38,6 +38,38 @@ function resolveAppPath(rootPath, appDir) {
   return resolved;
 }
 
+// Paths typed into Settings arrive however the user's shell or file explorer
+// produced them: wrapped in quotes, trailing-slashed, or written with the other
+// platform's separator. Normalizing to one absolute form means the same project
+// entered two different ways is recognised as the same project, and keeps every
+// later path.join predictable regardless of which OS the dashboard runs on.
+function normalizeUserPath(input) {
+  const raw = String(input == null ? '' : input).trim().replace(/^["']|["']$/g, '').trim();
+  if (!raw) return '';
+  const unified = process.platform === 'win32' ? raw.replace(/\//g, '\\') : raw;
+  return path.resolve(unified);
+}
+
+// The npm scripts defined by the app's package.json, so the UI can offer
+// `npm run dev-mt` / `npm run dev-tt` as a dropdown instead of making the user
+// remember which script this project uses. Best effort: a missing or unreadable
+// package.json just means no suggestions.
+function listScripts({ repoPath, appDir }) {
+  if (!repoPath) return [];
+  let pkgPath;
+  try {
+    pkgPath = path.join(resolveAppPath(repoPath, appDir), 'package.json');
+  } catch {
+    return [];
+  }
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    return Object.keys(pkg.scripts || {});
+  } catch {
+    return [];
+  }
+}
+
 function sanitizeBranchForDir(branch) {
   return branch.replace(/[\\/:*?"<>|]/g, '-');
 }
@@ -192,6 +224,8 @@ async function listGitWorktrees({ repoPath }) {
 
 module.exports = {
   resolveAppPath,
+  normalizeUserPath,
+  listScripts,
   createWorktree,
   linkNodeModules,
   reinstallDeps,

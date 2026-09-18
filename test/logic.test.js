@@ -382,3 +382,129 @@ test('wslWindowArgs: opens a Windows Terminal tab back into the distro', () => {
   assert.deepStrictEqual(args.slice(0, 6), ['new-tab', '--title', 'wt:abc', 'wsl.exe', '-d', 'Ubuntu-24.04']);
   assert.ok(args.join(' ').includes('/tmp/s.sh'));
 });
+
+// ---- port choice, dev command, and path normalization ---------------------
+
+const ports = require('../src/ports');
+
+function stateWith(worktrees, { startPort = 5002, nextPort = 5002 } = {}) {
+  return { config: { startPort }, worktrees, nextPort };
+}
+
+test('validatePort: rejects non-integers and out-of-range values', async () => {
+  const s = stateWith({});
+  await assert.rejects(() => ports.validatePort('abc', s), /whole number/);
+  await assert.rejects(() => ports.validatePort('50.5', s), /whole number/);
+  await assert.rejects(() => ports.validatePort(80, s), /between 1024 and 65535/);
+  await assert.rejects(() => ports.validatePort(70000, s), /between 1024 and 65535/);
+});
+
+test('validatePort: rejects a port already assigned to another worktree', async () => {
+  const s = stateWith({ a: { id: 'a', branch: 'feature/x', port: 5002 } });
+  await assert.rejects(() => ports.validatePort(5002, s), /already assigned .*feature\/x/);
+});
+
+test('validatePort: the worktree already holding the port may keep it', async () => {
+  const s = stateWith({ a: { id: 'a', branch: 'feature/x', port: 5002 } });
+  assert.equal(await ports.validatePort(5002, s, { excludeId: 'a' }), 5002);
+});
+
+test('validatePort: accepts a free port and returns it as a number', async () => {
+  const s = stateWith({});
+  assert.strictEqual(await ports.validatePort('5399', s), 5399);
+});
+
+test('findFreePort peeks without consuming; allocatePort advances nextPort', async () => {
+  const s = stateWith({}, { startPort: 5210, nextPort: 5210 });
+  const peeked = await ports.findFreePort(s);
+  assert.equal(s.nextPort, 5210, 'peeking must not move the cursor');
+  const taken = await ports.allocatePort(s);
+  assert.equal(taken, peeked);
+  assert.equal(s.nextPort, peeked + 1);
+});
+
+test('findFreePort skips ports already assigned to worktrees', async () => {
+  const s = stateWith(
+    { a: { id: 'a', branch: 'x', port: 5310 }, b: { id: 'b', branch: 'y', port: 5311 } },
+    { startPort: 5310, nextPort: 5310 }
+  );
+  assert.equal(await ports.findFreePort(s), 5312);
+});
+
+test('applyPortPlaceholder: substitutes every {port}, leaves other commands alone', () => {
+  assert.equal(
+    session.applyPortPlaceholder('npm run dev-mt -- --port {port}', 5002),
+    'npm run dev-mt -- --port 5002'
+  );
+  assert.equal(
+    session.applyPortPlaceholder('serve --port {port} --admin {port}', 4100),
+    'serve --port 4100 --admin 4100'
+  );
+  assert.equal(session.applyPortPlaceholder('npm run dev', 5002), 'npm run dev');
+  assert.equal(session.applyPortPlaceholder('', 5002), '');
+  assert.equal(session.applyPortPlaceholder(undefined, 5002), '');
+});
+
+test('applyPortPlaceholder: no port yet leaves the placeholder visible', () => {
+  assert.equal(
+    session.applyPortPlaceholder('npm run dev -- --port {port}', null),
+    'npm run dev -- --port {port}'
+  );
+});
+
+test('script builders substitute {port} into the dev command', () => {
+  const args = {
+    worktreePath: '/repo/.worktrees/wt-feature',
+    appPath: '/repo/.worktrees/wt-feature/app',
+    port: 5007,
+    portEnvVar: 'PORT',
+    devCommand: 'npm run dev-tt -- --port {port}',
+    dashboardPort: 4999,
+    worktreeId: 'id-1',
+    claudeArgs: '--session-id 00000000-0000-4000-8000-000000000000'
+  };
+  const scripts = [
+    session.buildPowerShellScript({ ...args, withClaude: true }),
+    session.buildPowerShellScript({ ...args, withClaude: false }),
+    session.buildTerminalScript(args),
+    session.buildBashSessionScript({ ...args, withClaude: true }),
+    session.buildBashSessionScript({ ...args, withClaude: false }),
+    session.buildBashTerminalScript(args)
+  ];
+  for (const s of scripts) {
+    assert.match(s, /--port 5007/, 'placeholder should be substituted');
+    assert.ok(!s.includes('{port}'), 'no raw placeholder should survive');
+  }
+});
+
+test('normalizeUserPath: strips quotes, whitespace and trailing separators', () => {
+  const base = path.join(os.tmpdir(), 'wtd-norm');
+  assert.equal(wt.normalizeUserPath(`  "${base}"  `), path.resolve(base));
+  assert.equal(wt.normalizeUserPath(`${base}${path.sep}`), path.resolve(base));
+  assert.equal(wt.normalizeUserPath("'" + base + "'"), path.resolve(base));
+});
+
+test('normalizeUserPath: blank input stays blank rather than becoming cwd', () => {
+  assert.equal(wt.normalizeUserPath(''), '');
+  assert.equal(wt.normalizeUserPath('   '), '');
+  assert.equal(wt.normalizeUserPath(null), '');
+  assert.equal(wt.normalizeUserPath(undefined), '');
+});
+
+test('listScripts: reads npm script names from the app package.json', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-scripts-'));
+  fs.mkdirSync(path.join(dir, 'app'));
+  fs.writeFileSync(
+    path.join(dir, 'app', 'package.json'),
+    JSON.stringify({ scripts: { dev: 'vite', 'dev-mt': 'vite --mode mt', 'dev-tt': 'vite --mode tt' } })
+  );
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: 'app' }), ['dev', 'dev-mt', 'dev-tt']);
+});
+
+test('listScripts: missing or unreadable package.json yields no suggestions', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-scripts-'));
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: '' }), []);
+  fs.writeFileSync(path.join(dir, 'package.json'), 'not json');
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: '' }), []);
+  assert.deepEqual(wt.listScripts({ repoPath: null, appDir: '' }), []);
+});
