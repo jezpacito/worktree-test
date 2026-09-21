@@ -54,10 +54,11 @@ function applyPortPlaceholder(devCommand, port) {
 }
 
 // Bash equivalents of the PowerShell launchers above, for the WSL window.
-function buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
+function buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude, sessionToken }) {
   const wt = bashQ(worktreePath);
   const app = bashQ(appPath || worktreePath);
   const cmd = applyPortPlaceholder(devCommand, port);
+  const tokenQs = exitTokenQuery(sessionToken);
 
   if (!withClaude) {
     return `#!/usr/bin/env bash
@@ -94,7 +95,7 @@ echo "Claude session ended. Stopping dev server..."
 kill $DEV_PID 2>/dev/null
 wait $DEV_PID 2>/dev/null
 
-if curl -s -m 5 -X POST "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit" > /dev/null; then
+if curl -s -m 5 -X POST "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit${tokenQs}" > /dev/null; then
   echo "Dashboard notified: committing changes (not pushing)."
 else
   echo "Could not reach the dashboard. Use 'Commit now' there instead."
@@ -149,6 +150,20 @@ function wslWindowArgs({ scriptPath, title, distro, hasWindowsTerminal }) {
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+// Anything that would end one shell word and start another. `extra` is pasted
+// verbatim into a generated script, so a value like `--model x; curl evil` has
+// to be refused rather than escaped -- there is no quoting that keeps it a
+// single argument in both bash and PowerShell.
+const UNSAFE_ARG_RE = /[;&|<>$`(){}\n\r\\'"]/;
+
+// The exit callback is the one endpoint a script calls back into, and it
+// triggers a commit. A token minted per launch means only the window this
+// dashboard actually opened can fire it -- not any other local process, and not
+// a web page that guessed the worktree id.
+function exitTokenQuery(sessionToken) {
+  return sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : '';
+}
+
 // Build the argument string for the `claude` invocation. The dashboard assigns
 // each worktree a session id up front rather than scraping one out of the
 // transcripts afterwards: the first launch names the session with --session-id,
@@ -158,6 +173,9 @@ const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 // resuming it would fail.
 function claudeArgsFor({ claudeSessionId, hasTranscript, extra } = {}) {
   const tail = (extra || '').trim();
+  if (tail && UNSAFE_ARG_RE.test(tail)) {
+    throw new Error(`Extra Claude arguments may not contain shell metacharacters: ${tail}`);
+  }
   if (!claudeSessionId) return tail;
   if (!UUID_RE.test(claudeSessionId)) {
     throw new Error(`Claude session id must be a UUID, got: ${claudeSessionId}`);
@@ -166,14 +184,23 @@ function claudeArgsFor({ claudeSessionId, hasTranscript, extra } = {}) {
   return `${flag} ${claudeSessionId}${tail ? ' ' + tail : ''}`;
 }
 
+// PowerShell expands $(...) subexpressions, $vars and backtick escapes inside
+// a double-quoted string -- even one passed to -LiteralPath, because expansion
+// happens before the cmdlet ever sees the value. Branch names may legally
+// contain `$` and `(`, and a worktree folder is named after its branch, so
+// without this a branch called `feat$(calc)` would execute `calc` here.
 function q(p) {
-  return String(p).replace(/"/g, '""');
+  return String(p)
+    .replace(/`/g, '``')
+    .replace(/\$/g, '`$')
+    .replace(/"/g, '`"');
 }
 
-function buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }) {
+function buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude, sessionToken }) {
   const wtPath = q(worktreePath);
   const appDirPath = q(appPath || worktreePath);
   const cmd = applyPortPlaceholder(devCommand, port);
+  const tokenQs = exitTokenQuery(sessionToken);
 
   // Dev-server-only mode: no Claude, no background job, no auto-commit callback.
   // The dev command runs in the foreground so closing the window (or Ctrl+C)
@@ -214,7 +241,7 @@ $devJob = Start-Job -ScriptBlock {
   Set-Location -LiteralPath $path
   Set-Item -Path "Env:$envVarName" -Value $port
   Invoke-Expression $cmd
-} -ArgumentList "${appDirPath}", "${portEnvVar}", "${port}", "${cmd.replace(/"/g, '\\"')}"
+} -ArgumentList "${appDirPath}", "${portEnvVar}", "${port}", "${q(cmd)}"
 
 Write-Host "Dev server starting in background (job id $($devJob.Id))..." -ForegroundColor DarkGray
 Write-Host "Starting Claude CLI session below. Exit it (Ctrl+D or 'exit') to stop the dev server and auto-commit." -ForegroundColor Cyan
@@ -229,7 +256,7 @@ Receive-Job $devJob -ErrorAction SilentlyContinue | Out-Null
 Remove-Job $devJob -ErrorAction SilentlyContinue | Out-Null
 
 try {
-  Invoke-RestMethod -Uri "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit" -Method POST -TimeoutSec 5 | Out-Null
+  Invoke-RestMethod -Uri "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit${tokenQs}" -Method POST -TimeoutSec 5 | Out-Null
   Write-Host "Dashboard notified: committing changes (not pushing)." -ForegroundColor Green
 } catch {
   Write-Host "Could not reach dashboard to auto-commit. Open the dashboard and use 'Commit now' manually." -ForegroundColor Yellow
@@ -285,6 +312,18 @@ claude ${claudeArgs || ''}
 `;
 }
 
+// spawn() reports a missing binary asynchronously, as an 'error' event. With no
+// listener that is an unhandled event, which takes the whole dashboard process
+// down -- and a route's try/catch cannot see it, because it is not a rejection.
+// Every detached launch goes through here.
+function detach(child, what) {
+  child.on('error', (e) => {
+    console.error(`[worktree-dashboard] ${what} failed to launch: ${e.message}`);
+  });
+  child.unref();
+  return child;
+}
+
 async function openClaude({ worktreeId, worktreePath, claudeArgs }) {
   const kind = launcherKind();
   if (kind === 'posix') {
@@ -296,15 +335,13 @@ async function openClaude({ worktreeId, worktreePath, claudeArgs }) {
     const base = path.join(SESSIONS_DIR, `${worktreeId}-claude`);
     fs.writeFileSync(base, buildBashClaudeScript({ worktreePath, claudeArgs }), 'utf8');
     const child = await spawnWslWindow(base, `claude:${worktreeId}`);
-    child.unref();
-    return { pid: child.pid, scriptPath: base + '.sh' };
+    return { pid: child.pid ?? null, scriptPath: base + '.sh' };
   }
 
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}-claude.ps1`);
   fs.writeFileSync(scriptPath, buildClaudeScript({ worktreePath, claudeArgs }), 'utf8');
   const child = await spawnWindow(scriptPath, `claude:${worktreeId}`);
-  child.unref();
-  return { pid: child.pid, scriptPath };
+  return { pid: child.pid ?? null, scriptPath };
 }
 
 // Open a bash script in a real window from inside WSL, via Windows Terminal
@@ -316,7 +353,7 @@ async function spawnWslWindow(script, title) {
   const wtExe = await which('wt.exe');
   const distro = process.env.WSL_DISTRO_NAME || 'Ubuntu';
   const args = wslWindowArgs({ scriptPath, title, distro, hasWindowsTerminal: !!wtExe });
-  return spawn(wtExe || 'cmd.exe', args, { detached: true, stdio: 'ignore' });
+  return detach(spawn(wtExe || 'cmd.exe', args, { detached: true, stdio: 'ignore' }), title);
 }
 
 // Windows Terminal when it's installed (nicer tabs), plain PowerShell otherwise.
@@ -325,10 +362,10 @@ async function spawnWindow(scriptPath, title) {
   const psArgs = ['-NoExit', '-ExecutionPolicy', 'Bypass', '-File', scriptPath];
   const wtExe = await which('wt.exe');
   if (wtExe) {
-    return spawn(wtExe, ['new-tab', '--title', title, 'powershell.exe', ...psArgs],
-      { detached: true, stdio: 'ignore', windowsHide: false });
+    return detach(spawn(wtExe, ['new-tab', '--title', title, 'powershell.exe', ...psArgs],
+      { detached: true, stdio: 'ignore', windowsHide: false }), title);
   }
-  return spawn('powershell.exe', psArgs, { detached: true, stdio: 'ignore', windowsHide: false });
+  return detach(spawn('powershell.exe', psArgs, { detached: true, stdio: 'ignore', windowsHide: false }), title);
 }
 
 async function openTerminal({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand }) {
@@ -343,15 +380,13 @@ async function openTerminal({ worktreeId, worktreePath, appPath, port, portEnvVa
     const base = path.join(SESSIONS_DIR, `${worktreeId}-terminal`);
     fs.writeFileSync(base, buildBashTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }), 'utf8');
     const child = await spawnWslWindow(base, `term:${worktreeId}`);
-    child.unref();
-    return { pid: child.pid, scriptPath: base + '.sh', cwd };
+    return { pid: child.pid ?? null, scriptPath: base + '.sh', cwd };
   }
 
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}-terminal.ps1`);
   fs.writeFileSync(scriptPath, buildTerminalScript({ worktreePath, appPath, port, portEnvVar, devCommand }), 'utf8');
   const child = await spawnWindow(scriptPath, `term:${worktreeId}`);
-  child.unref();
-  return { pid: child.pid, scriptPath, cwd };
+  return { pid: child.pid ?? null, scriptPath, cwd };
 }
 
 // Open the worktree ROOT in VS Code -- you want the whole branch checkout in the
@@ -368,46 +403,47 @@ async function openInVsCode({ worktreePath }) {
   }
   // `code` is a .cmd shim on Windows, which Node won't spawn directly. Go via
   // cmd.exe /c rather than shell:true, so a path with spaces is still quoted.
-  const child = process.platform === 'win32'
-    ? spawn('cmd.exe', ['/c', bin, worktreePath], { detached: true, stdio: 'ignore', windowsHide: true })
-    : spawn(bin, [worktreePath], { detached: true, stdio: 'ignore' });
-  child.unref();
-  return { pid: child.pid, path: worktreePath };
+  const child = detach(
+    process.platform === 'win32'
+      ? spawn('cmd.exe', ['/c', bin, worktreePath], { detached: true, stdio: 'ignore', windowsHide: true })
+      : spawn(bin, [worktreePath], { detached: true, stdio: 'ignore' }),
+    'VS Code'
+  );
+  return { pid: child.pid ?? null, path: worktreePath };
 }
 
-async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, claudeArgs, withClaude = true }) {
+async function launchSession({ worktreeId, worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, claudeArgs, withClaude = true, sessionToken }) {
   const cmd = applyPortPlaceholder(devCommand, port);
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   const kind = launcherKind();
 
   if (kind === 'wsl') {
     const base = path.join(SESSIONS_DIR, String(worktreeId));
-    fs.writeFileSync(base, buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude }), 'utf8');
+    fs.writeFileSync(base, buildBashSessionScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude, sessionToken }), 'utf8');
     const wslChild = await spawnWslWindow(base, `wt:${worktreeId}`);
-    wslChild.unref();
-    return { pid: wslChild.pid, scriptPath: base + '.sh' };
+    return { pid: wslChild.pid ?? null, scriptPath: base + '.sh' };
   }
 
   const scriptPath = path.join(SESSIONS_DIR, `${worktreeId}.ps1`);
-  const script = buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude });
+  const script = buildPowerShellScript({ worktreePath, appPath, port, portEnvVar, devCommand, dashboardPort, worktreeId, claudeArgs, withClaude, sessionToken });
   fs.writeFileSync(scriptPath, script, 'utf8');
 
   let child;
   if (kind === 'win32') {
     child = await spawnWindow(scriptPath, `wt:${worktreeId}`);
-  } else if (!withClaude) {
-    // Non-Windows, dev-only: run the dev server in the foreground, no callback.
-    child = spawn('bash', ['-lc', `cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${cmd}`], {
-      detached: true, stdio: 'ignore'
-    });
   } else {
-    // Non-Windows fallback: just run claude directly in a detached shell (no split-pane dev job UI, best-effort).
-    child = spawn('bash', ['-lc', `cd "${worktreePath}" && (cd "${appPath || worktreePath}" && ${portEnvVar}=${port} ${cmd} &) ; claude ${claudeArgs || ''}; curl -s -X POST http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit`], {
-      detached: true, stdio: 'ignore'
-    });
+    // Plain Linux/macOS: no window to open, so the session runs in a detached
+    // shell. Paths go through bashQ for the same reason they do in the WSL
+    // scripts -- a branch name, and therefore a folder name, can contain `$`.
+    const app = bashQ(appPath || worktreePath);
+    const wt = bashQ(worktreePath);
+    const tokenQs = exitTokenQuery(sessionToken);
+    const line = withClaude
+      ? `cd "${wt}" && (cd "${app}" && ${portEnvVar}=${port} ${cmd} &) ; claude ${claudeArgs || ''}; curl -s -m 5 -X POST "http://127.0.0.1:${dashboardPort}/api/worktrees/${worktreeId}/session/exit${tokenQs}"`
+      : `cd "${app}" && ${portEnvVar}=${port} ${cmd}`;
+    child = detach(spawn('bash', ['-lc', line], { detached: true, stdio: 'ignore' }), `wt:${worktreeId}`);
   }
-  child.unref();
-  return { pid: child.pid, scriptPath };
+  return { pid: child.pid ?? null, scriptPath };
 }
 
 module.exports = {

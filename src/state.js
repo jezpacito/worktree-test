@@ -38,7 +38,8 @@ const DEFAULT_STATE = {
     costThreshold: 20         // $ per worktree above which an optimization tip fires
   },
   worktrees: {},   // id -> worktree record
-  nextPort: 5002
+  nextPort: 5002,  // rolling hint only; allocation rescans from startPort
+  reservations: {} // port -> expiry ms, for ports handed out but not yet recorded
 };
 
 function load() {
@@ -51,15 +52,39 @@ function load() {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     return { ...structuredClone(DEFAULT_STATE), ...raw, config: { ...DEFAULT_STATE.config, ...(raw.config || {}) } };
   } catch (e) {
-    console.error('State file corrupt, resetting:', e.message);
+    // Never silently destroy the only record of every worktree, port and
+    // Claude session id. Keep the unreadable file so it can be hand-repaired.
+    const backup = `${STATE_FILE}.corrupt-${Date.now()}`;
+    try {
+      fs.copyFileSync(STATE_FILE, backup);
+      console.error(`State file corrupt, resetting. Previous contents kept at ${backup}:`, e.message);
+    } catch {
+      console.error('State file corrupt and could not be backed up, resetting:', e.message);
+    }
     save(DEFAULT_STATE);
     return structuredClone(DEFAULT_STATE);
   }
 }
 
+// Written to a temp file and renamed, because rename is atomic: a crash (or a
+// full disk) mid-save leaves the previous state.json intact rather than a
+// half-written one that load() would have to throw away.
 function save(state) {
   ensureDirs();
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
+  fs.renameSync(tmp, STATE_FILE);
 }
 
-module.exports = { load, save, APP_DIR, SESSIONS_DIR, STATE_FILE };
+// Read-modify-write as one step. A handler that loaded state, awaited something
+// slow (spawning a terminal, running git) and then saved the object it loaded
+// would clobber anything written in the meantime. Re-reading inside the mutation
+// means only the fields `fn` actually touches are updated.
+function mutate(fn) {
+  const s = load();
+  const result = fn(s);
+  save(s);
+  return result === undefined ? s : result;
+}
+
+module.exports = { load, save, mutate, APP_DIR, SESSIONS_DIR, STATE_FILE };

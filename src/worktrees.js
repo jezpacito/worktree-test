@@ -136,14 +136,45 @@ async function linkNodeModules({ repoPath, worktreePath, appDir }) {
   return { linked: Object.values(results).some((r) => r.linked), levels: results };
 }
 
+// Remove whatever is at `dest` WITHOUT ever recursing through a link. This
+// node_modules is usually a junction/symlink into the MAIN checkout, so a
+// recursive delete that followed it would wipe the real dependency tree the
+// whole project shares. lstat (not stat) is what tells the two apart.
+function removeNodeModules(dest) {
+  let st;
+  try {
+    st = fs.lstatSync(dest);
+  } catch {
+    return; // nothing there
+  }
+  if (st.isSymbolicLink()) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      // Windows junctions sometimes need rmdir rather than unlink. Still not
+      // recursive, so the target is never touched.
+      fs.rmdirSync(dest);
+    }
+    return;
+  }
+  fs.rmSync(dest, { recursive: true, force: true });
+}
+
 async function reinstallDeps({ worktreePath, appDir }) {
   const appPath = resolveAppPath(worktreePath, appDir);
-  const dest = path.join(appPath, 'node_modules');
-  if (fs.existsSync(dest)) {
-    // remove the junction/symlink (or folder) first
-    fs.rmSync(dest, { recursive: true, force: true });
-  }
+  removeNodeModules(path.join(appPath, 'node_modules'));
   await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install'], appPath);
+}
+
+// Does this worktree's .gitignore cover `relPath`? `git check-ignore` exits 1
+// (i.e. rejects) when the path is NOT ignored, which is the answer we want.
+async function isIgnored({ worktreePath, relPath }) {
+  try {
+    await run('git', ['check-ignore', '-q', '--', relPath], worktreePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function copyAndPatchEnvFile({ repoPath, worktreePath, appDir, envFileName, portEnvVar, port }) {
@@ -229,6 +260,8 @@ module.exports = {
   createWorktree,
   linkNodeModules,
   reinstallDeps,
+  removeNodeModules,
+  isIgnored,
   copyAndPatchEnvFile,
   removeWorktree,
   pruneWorktrees,

@@ -67,7 +67,9 @@ $('newPort').addEventListener('input', () => {
 function renderBrandSub() {
   const repo = config.repoPath || '';
   const name = repo ? repo.split(/[\\/]/).filter(Boolean).pop() : 'no project set';
-  $('brandSub').textContent = `localhost:${config.dashboardPort || 4999} · ${name}`;
+  // The address actually in use, not the configured one: WTD_PORT, a proxy or
+  // an https front-end all make those differ.
+  $('brandSub').textContent = `${location.host || `localhost:${config.dashboardPort || 4999}`} · ${name}`;
 }
 
 // Echo where the dev command will actually run, so a wrong subfolder is
@@ -174,6 +176,7 @@ const TONES = {
   'session-exited':         { tone: 'idle',    label: 'Session ended' },
   'no-changes':             { tone: 'idle',    label: 'No changes' },
   'committed-pending-push': { tone: 'pending', label: 'Committed, not pushed' },
+  'pushed-no-pr':           { tone: 'pending', label: 'Pushed, PR not created' },
   'pr-created':             { tone: 'done',    label: 'PR created' },
   'discovered':             { tone: 'found',   label: 'Discovered' },
   'missing':                { tone: 'gone',    label: 'Folder missing' }
@@ -227,11 +230,20 @@ function shortPath(full) {
 const CHEVRON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const KEBAB = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
 
+// Dev servers speak plain http, whatever scheme the dashboard itself was
+// served over -- an https dashboard linking to https://localhost:5002 would
+// just fail to connect. The host follows the address bar so the link still
+// points at the right machine when the dashboard is reached through a proxy.
+function devServerOrigin(port) {
+  const host = location.hostname || 'localhost';
+  return `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
+}
+
 // The port cell links to the dev server. It stays clickable when idle -- the
 // port is still that worktree's -- but is dimmed so you can tell it is not up.
 function portCell(w) {
   if (w.port == null) return '<span class="empty-cell">—</span>';
-  const url = `http://localhost:${w.port}`;
+  const url = devServerOrigin(w.port);
   const live = isRunning(w.status);
   const cmd = w.devCommand ? `\nDev command: ${w.devCommand}` : '';
   const title = (live ? `Open ${url}` : `Open ${url}. The dev server is not running — start it first.`) + cmd;

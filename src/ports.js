@@ -1,8 +1,9 @@
 // ports.js
-// Allocates ports starting at config.startPort (default 5002), incrementing
-// for each successive worktree, and reclaiming ports when a worktree is
-// removed. Also does a best-effort live check that the OS actually thinks
-// the port is free before handing it out, in case something outside the
+// Allocates ports starting at config.startPort (default 5002), taking the
+// lowest one that is neither assigned to a worktree nor in use on the machine.
+// The scan always restarts at startPort, so a port really is reclaimed when its
+// worktree is removed. Also does a best-effort live check that the OS actually
+// thinks the port is free before handing it out, in case something outside the
 // dashboard is squatting on it.
 //
 // You can also name a port yourself when creating a worktree; validatePort
@@ -32,20 +33,54 @@ async function isPortFree(port) {
   return bindable(port, '0.0.0.0');
 }
 
+// How long a port handed out by an in-flight create is held before it is
+// assumed abandoned. Creating a worktree (git checkout + npm link) is slow, and
+// the record only lands at the end of it.
+const RESERVATION_MS = 60_000;
+
+function liveReservations(state) {
+  const now = Date.now();
+  const out = {};
+  for (const [port, expires] of Object.entries(state.reservations || {})) {
+    if (expires > now) out[port] = expires;
+  }
+  return out;
+}
+
+// Mark a port as taken before the worktree record that will own it exists.
+// Without this, two creates started at the same moment scan the same state,
+// see the same free port and both get it -- neither is in state.worktrees yet
+// and neither has bound the port.
+function reserve(state, port) {
+  state.reservations = liveReservations(state);
+  state.reservations[port] = Date.now() + RESERVATION_MS;
+  state.nextPort = port + 1;
+  return port;
+}
+
+function release(state, port) {
+  state.reservations = liveReservations(state);
+  delete state.reservations[port];
+}
+
 function portsInUse(state, { excludeId } = {}) {
-  return new Set(
+  const used = new Set(
     Object.values(state.worktrees)
       .filter((w) => w.id !== excludeId)
       .map((w) => w.port)
       .filter((p) => p != null)
   );
+  for (const port of Object.keys(liveReservations(state))) used.add(Number(port));
+  return used;
 }
 
 // The port allocatePort would hand out next, without consuming it. Used by the
 // New Worktree form to pre-fill its port box with a suggestion.
 async function findFreePort(state) {
   const used = portsInUse(state);
-  let candidate = Math.max(state.config.startPort, state.nextPort || state.config.startPort);
+  // Always from the bottom: a port freed by a removed worktree is reusable, and
+  // the cursor does not drift upwards forever as worktrees come and go.
+  let candidate = state.config.startPort;
   for (let tries = 0; tries < 500; tries++) {
     if (!used.has(candidate) && (await isPortFree(candidate))) return candidate;
     candidate++;
@@ -73,10 +108,13 @@ async function validatePort(value, state, { excludeId } = {}) {
   if (taken) {
     throw new Error(`Port ${port} is already assigned to the worktree on branch "${taken.branch}".`);
   }
+  if (liveReservations(state)[port]) {
+    throw new Error(`Port ${port} was just handed to another worktree being created. Pick another one.`);
+  }
   if (!(await isPortFree(port))) {
     throw new Error(`Port ${port} is already in use on this machine. Pick another one.`);
   }
   return port;
 }
 
-module.exports = { allocatePort, findFreePort, isPortFree, validatePort, MIN_PORT, MAX_PORT };
+module.exports = { allocatePort, findFreePort, isPortFree, validatePort, reserve, release, MIN_PORT, MAX_PORT };

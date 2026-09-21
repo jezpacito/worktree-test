@@ -87,7 +87,10 @@ project's own config files and without needing admin rights on Windows.
 - **Auto-commits (never auto-pushes)** when you exit a Claude session, so
   work-in-progress is always saved locally. Pushing and opening a PR only
   happens when you click "Push & create PR" in the dashboard -- that's the
-  explicit confirmation step.
+  explicit confirmation step. The env file this tool wrote into the worktree is
+  kept out of that commit unless your project already gitignores it, so a
+  per-worktree port -- and whatever else that file holds -- never rides along
+  into a branch you push.
 - **Dashboard view** of every worktree: branch, path, port, status, an
   estimated dollar cost, and a best-effort token count -- per worktree and
   in total. The table has a branch filter and pages 10 at a time.
@@ -199,7 +202,7 @@ Every other per-row action lives in that same **⋯** menu:
 | **Open Claude session** | Just the Claude conversation for that worktree, resumed. No dev server, no port taken, nothing committed when you exit, and the row's status is untouched -- for checking back on a session without starting anything. |
 | **Open terminal** | A shell in that worktree's app folder with the port env var already exported. |
 | **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
-| **Commit now** | Commits everything in that worktree. Never pushes. |
+| **Commit now** | Commits everything in that worktree, except the env file this tool patched. Never pushes. |
 | **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |
 | **Start a fresh Claude session** | Rotates the stored session id, so the next **Start** begins a new conversation rather than resuming. |
 | **Remove worktree** | Deletes the folder. The branch and its commits are kept. |
@@ -207,6 +210,36 @@ Every other per-row action lives in that same **⋯** menu:
 **Start** and **Mark idle** stay outside the menu as the row's primary button.
 **Mark idle** only resets the record and frees the port -- it does not stop a
 process, so use it after you have closed the terminal yourself.
+
+## What the dashboard will and won't let happen
+
+It listens on `127.0.0.1` only, and on top of that:
+
+- **Requests must be addressed to localhost.** A page you visit cannot point its
+  own domain at `127.0.0.1` and then drive this API -- the request still carries
+  that domain in its `Host` header, and it is refused. Cross-origin writes are
+  refused too. `https://localhost` is fine: the scheme is not what is being
+  checked, so a local TLS front-end works unchanged. If you publish the
+  dashboard through a proxy under some other name, say so explicitly:
+
+  ```
+  WTD_ALLOWED_HOSTS=wtd.internal,dash.localhost wtd start
+  ```
+
+  `X-Forwarded-Host` is deliberately ignored -- anyone can set it, so trusting
+  it would hand back the bypass this check exists to close.
+- **The auto-commit callback is token-gated.** Each launch mints a token that
+  only the terminal window it opened knows, so nothing else on the machine can
+  declare your session over and set a commit running. The token is never sent
+  to the browser.
+- **Nothing is pushed without a click.** Auto-commit is local. "Push & create
+  PR" is the only thing that talks to your remote, and if the push lands but
+  `gh` fails, the row says so rather than pretending the PR exists.
+- **Names are escaped, not trusted.** Branch names reach shell scripts as folder
+  paths; they are escaped for both bash and PowerShell. Extra Claude arguments
+  containing shell metacharacters are rejected outright.
+- **state.json is written atomically** and, if it is ever unreadable, kept as a
+  `.corrupt-<timestamp>` copy rather than silently replaced with defaults.
 
 ## Running the tests
 

@@ -508,3 +508,143 @@ test('listScripts: missing or unreadable package.json yields no suggestions', ()
   assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: '' }), []);
   assert.deepEqual(wt.listScripts({ repoPath: null, appDir: '' }), []);
 });
+
+// ---- reconcile: a failed git call must not look like "no worktrees" -------
+
+test('reconcile: a git failure leaves every record alone', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-test-'));
+  const notARepo = path.join(tmp, 'not-a-repo');
+  const live = path.join(tmp, 'wt-live');
+  fs.mkdirSync(notARepo);
+  fs.mkdirSync(live);
+
+  const s = {
+    config: { repoPath: notARepo },
+    worktrees: {
+      a: { id: 'a', path: live, branch: 'live', status: 'session-running', tracked: true, sessionPid: 42 }
+    }
+  };
+  // No gitList injected, and repoPath is not a git repo -> listGitWorktrees throws.
+  await reconcile(s);
+
+  assert.equal(s.worktrees.a.status, 'session-running', 'must not be downgraded to missing');
+  assert.equal(s.worktrees.a.sessionPid, 42);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// ---- ports: reclamation and reservations ---------------------------------
+
+test('findFreePort reuses a port freed by a removed worktree', async () => {
+  // nextPort has drifted upwards, but 5320 is free again: it must come back.
+  const s = { config: { startPort: 5320 }, worktrees: {}, nextPort: 5400 };
+  assert.equal(await ports.findFreePort(s), 5320);
+});
+
+test('reserve holds a port until the worktree record exists', async () => {
+  const s = { config: { startPort: 5330 }, worktrees: {}, nextPort: 5330, reservations: {} };
+  const first = await ports.allocatePort(s);
+  ports.reserve(s, first);
+  const second = await ports.findFreePort(s);
+  assert.notEqual(second, first, 'a concurrent create must not get the same port');
+  await assert.rejects(() => ports.validatePort(first, s), /being created/);
+
+  ports.release(s, first);
+  assert.equal(await ports.findFreePort(s), first, 'released once the record is written');
+});
+
+test('reserve ignores expired reservations', async () => {
+  const s = { config: { startPort: 5340 }, worktrees: {}, nextPort: 5340, reservations: { 5340: Date.now() - 1000 } };
+  assert.equal(await ports.findFreePort(s), 5340);
+});
+
+// ---- shell/PowerShell injection through paths and args --------------------
+
+test('buildPowerShellScript: a branch name cannot inject a PowerShell subexpression', () => {
+  const script = session.buildPowerShellScript({
+    worktreePath: 'C:\\wt\\wt-feat$(calc)',
+    appPath: 'C:\\wt\\wt-feat$(calc)',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', withClaude: true
+  });
+  assert.ok(!/[^`]\$\(calc\)/.test(script), 'every $( must be backtick-escaped');
+  assert.match(script, /`\$\(calc\)/);
+});
+
+test('buildBashSessionScript: a branch name cannot inject a bash subshell', () => {
+  const s = session.buildBashSessionScript({
+    worktreePath: '/wt/wt-feat$(touch pwned)',
+    appPath: '/wt/wt-feat$(touch pwned)',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', claudeArgs: '', withClaude: true
+  });
+  assert.ok(!/[^\\]\$\(touch/.test(s), 'every $( must be backslash-escaped');
+});
+
+test('claudeArgsFor: refuses extra args carrying shell metacharacters', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model x; curl evil.test' }), /metacharacters/);
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model $(id)' }), /metacharacters/);
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model `id`' }), /metacharacters/);
+  // ordinary flags still go through
+  assert.equal(
+    session.claudeArgsFor({ claudeSessionId: id, hasTranscript: true, extra: '--model opus' }),
+    `--resume ${id} --model opus`
+  );
+});
+
+// ---- the session-exit callback is token-gated ----------------------------
+
+test('session scripts carry the per-launch exit token, and omit it when absent', () => {
+  const args = {
+    worktreePath: '/wt/f', appPath: '/wt/f', port: 5005, portEnvVar: 'PORT',
+    devCommand: 'npm run dev', dashboardPort: 4999, worktreeId: 'abc',
+    claudeArgs: '', withClaude: true
+  };
+  const withToken = session.buildBashSessionScript({ ...args, sessionToken: 'deadbeef' });
+  assert.match(withToken, /session\/exit\?token=deadbeef/);
+  const ps = session.buildPowerShellScript({ ...args, sessionToken: 'deadbeef' });
+  assert.match(ps, /session\/exit\?token=deadbeef/);
+  // builders called without a token (tests, older records) emit a clean URL
+  assert.match(session.buildBashSessionScript(args), /session\/exit"/);
+});
+
+// ---- transcript directory matching ---------------------------------------
+
+test('findProjectLogDir: same folder name under two roots does not collide', () => {
+  const projects = tmpdir('wtd-projects-');
+  fs.mkdirSync(path.join(projects, '-repo-a-wt-feature'), { recursive: true });
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  fs.writeFileSync(path.join(projects, '-repo-a-wt-feature', `${id}.jsonl`), '{}\n');
+
+  // repo-b's worktree has the same basename but no transcripts of its own
+  assert.strictEqual(usage.transcriptExists('/repo/b/wt-feature', id, projects), false);
+  assert.strictEqual(usage.transcriptExists('/repo/a/wt-feature', id, projects), true);
+});
+
+test('findProjectLogDir: a dot-directory root still matches', () => {
+  const projects = tmpdir('wtd-projects-');
+  // the CLI flattens the dot in ".worktrees" to a dash
+  fs.mkdirSync(path.join(projects, '-repo--worktrees-wt-feature'), { recursive: true });
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  fs.writeFileSync(path.join(projects, '-repo--worktrees-wt-feature', `${id}.jsonl`), '{}\n');
+  assert.strictEqual(usage.transcriptExists('/repo/.worktrees/wt-feature', id, projects), true);
+});
+
+// ---- node_modules removal must never follow the link ----------------------
+
+test('removeNodeModules: unlinks the junction without touching the main tree', () => {
+  const root = tmpdir('wtd-nm-');
+  const main = path.join(root, 'main', 'node_modules');
+  const worktree = path.join(root, 'wt');
+  fs.mkdirSync(main, { recursive: true });
+  fs.mkdirSync(worktree, { recursive: true });
+  fs.writeFileSync(path.join(main, 'marker.txt'), 'keep me');
+  const link = path.join(worktree, 'node_modules');
+  fs.symlinkSync(main, link, 'dir');
+
+  wt.removeNodeModules(link);
+
+  assert.strictEqual(fs.existsSync(link), false, 'link removed');
+  assert.strictEqual(fs.existsSync(path.join(main, 'marker.txt')), true, 'main node_modules untouched');
+});

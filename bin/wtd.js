@@ -18,7 +18,7 @@ if (cmd === 'start') {
     .then(() => state.save(s))
     .catch((e) => console.error('startup reconcile failed:', e.message))
     .finally(() => {
-      const app = createApp();
+      const app = createApp({ dashboardPort: port });
       const server = app.listen(port, '127.0.0.1', () => {
         console.log(`\nWorktree Dashboard running at http://localhost:${port}\n`);
         if (!s.config.repoPath) {
