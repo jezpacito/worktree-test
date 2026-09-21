@@ -431,6 +431,45 @@ textarea { font-family: var(--font-mono); font-size: var(--text-sm); color: var(
   font-size: var(--text-xs);
 }
 
+/* Settings: the detected values, and the fold that hides the knobs for them.
+   One field is genuinely unknowable (where the repo is); the rest are worked
+   out, so they sit behind a disclosure rather than competing with it. */
+.overrides { margin-top: var(--space-4); border-top: 1px solid var(--border); }
+.overrides > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4) 0 0;
+  cursor: pointer;
+  list-style: none;
+}
+.overrides > summary::-webkit-details-marker { display: none; }
+.overrides-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+/* The marker is drawn rather than typed, so it can rotate on open. */
+.overrides-label::before {
+  content: "";
+  display: inline-block;
+  width: 0; height: 0;
+  margin-right: 8px;
+  border-left: 4px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transform: translateY(-1px);
+  transition: transform 120ms ease;
+}
+.overrides[open] > summary .overrides-label::before { transform: rotate(90deg) translateX(-1px); }
+.overrides-sub { font-size: var(--text-sm); color: var(--fg-3); padding-left: 12px; }
+.overrides > summary:focus-visible { outline: 2px solid var(--brand-500); outline-offset: 3px; border-radius: var(--radius-sm); }
+.overrides > .settings-grid { padding-top: var(--space-4); }
+
+@media (prefers-reduced-motion: reduce) {
+  .overrides-label::before { transition: none; }
+}
+
 /* Settings: what was inferred about the project, and why. */
 .detected {
   margin: 4px 0 0;

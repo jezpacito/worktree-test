@@ -116,3 +116,68 @@ test('the dev script is found even when it is not called "dev"', () => {
   assert.equal(detect.pickDevScript({ dev: 'a', start: 'b' }), 'dev', 'dev preferred over start');
   assert.equal(detect.pickDevScript({ build: 'x' }), null);
 });
+
+// ---- finding the app, and the env file it actually has --------------------
+
+test('detectAppDir: an app at the repo root means no subfolder', () => {
+  const dir = project({ 'package.json': { scripts: { dev: 'vite' } } });
+  assert.equal(detect.detectAppDir(dir), '');
+});
+
+test('detectAppDir: finds a monorepo app under apps/', () => {
+  const dir = project({
+    'package.json': { name: 'root', private: true },
+    'apps/web/package.json': { scripts: { dev: 'vite' } }
+  });
+  assert.equal(detect.detectAppDir(dir), 'apps/web');
+});
+
+test('detectAppDir: finds a conventional subfolder before an arbitrary one', () => {
+  const dir = project({
+    'package.json': { name: 'root' },
+    'zzz-other/package.json': { scripts: { dev: 'vite' } },
+    'client/package.json': { scripts: { dev: 'vite' } }
+  });
+  assert.equal(detect.detectAppDir(dir), 'client');
+});
+
+test('detectAppDir: a package.json with no dev script does not count as the app', () => {
+  const dir = project({
+    'package.json': { name: 'root' },
+    'tools/package.json': { scripts: { build: 'tsc' } }
+  });
+  assert.equal(detect.detectAppDir(dir), '');
+});
+
+test('detectAppDir: nothing to find is not an error', () => {
+  assert.equal(detect.detectAppDir(project({ 'README.md': 'empty' })), '');
+  assert.equal(detect.detectAppDir(''), '');
+});
+
+test('detectEnvFileName: keeps the configured file when it exists', () => {
+  const dir = project({ '.env.development': 'X=1', '.env': 'Y=2' });
+  assert.equal(detect.detectEnvFileName(dir, '.env.development'), '.env.development');
+});
+
+test('detectEnvFileName: falls back to whichever env file the app has', () => {
+  const dir = project({ '.env.local': 'X=1' });
+  assert.equal(detect.detectEnvFileName(dir, '.env.development'), '.env.local');
+  assert.equal(detect.detectEnvFileName(project({ 'a.txt': '' }), '.env.development'), null);
+});
+
+test('a nested vite app is read from its own folder, not the repo root', () => {
+  const dir = project({
+    'package.json': { name: 'root' },
+    'apps/web/package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '^5' } },
+    'apps/web/.env.local': 'VITE_PORT=5173\nHTTPS=true\n'
+  });
+  const appDir = detect.detectAppDir(dir);
+  const d = detect.detectProject({
+    repoPath: dir, appPath: path.join(dir, appDir), envFileName: '.env.development'
+  });
+  assert.equal(appDir, 'apps/web');
+  assert.equal(d.devCommand, 'npm run dev -- --port {port}');
+  assert.equal(d.portEnvVar, 'VITE_PORT');
+  assert.equal(d.envFileName, '.env.local');
+  assert.equal(d.devServerScheme, 'https');
+});

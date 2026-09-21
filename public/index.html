@@ -66,58 +66,68 @@
         <div class="settings-head">
           <div>
             <h2 class="card-title">Settings</h2>
-            <p class="card-sub">Kept in your home folder, never written into the project you point this at.</p>
+            <p class="card-sub">Point this at your project. Everything else is worked out from it, and kept in your home folder rather than written into the project.</p>
           </div>
         </div>
         <div class="settings-grid">
-          <label class="field" title="The git root of your project. Worktrees are branched from here.">
+          <label class="field span-all" title="The git root of your project. Worktrees are branched from here.">
             <span>Project path (repo root)</span>
             <input id="cfgRepoPath" placeholder="C:\Users\ana\code\my-app" />
-          </label>
-          <label class="field" title="Relative to the repo root. Leave blank if the dev command runs at the root. The dev command, the env file and node_modules all resolve inside this folder.">
-            <span>App subfolder (optional)</span>
-            <input id="cfgAppDir" placeholder="src/renderer" />
-          </label>
-          <label class="field" title="Default dev command for new worktrees; each worktree can override it. Some dev servers (Vite) ignore the port env var -- write {port} in the command and it is substituted with that worktree's port, e.g. npm run dev -- --port {port}.">
-            <span>Dev command (default)</span>
-            <input id="cfgDevCommand" placeholder="npm run dev" list="devCommandOptions" />
-            <small class="hint">Use <code>{port}</code> if your dev server ignores the env var (Vite does).</small>
-          </label>
-          <label class="field narrow" title="How the dashboard links to your dev servers. Pick https only if your project's dev server actually serves TLS (e.g. Vite with server.https) -- this does not turn TLS on for you.">
-            <span>Dev server uses</span>
-            <select id="cfgDevServerScheme">
-              <option value="http">http</option>
-              <option value="https">https</option>
-            </select>
-          </label>
-          <label class="field" title="The env var your dev server reads its port from. Each worktree gets its own port in this var.">
-            <span>Port env var</span>
-            <input id="cfgPortEnvVar" placeholder="PORT" />
-          </label>
-          <label class="field" title="Copied from the app subfolder of the main repo into each new worktree, with the port var patched to that worktree's port.">
-            <span>Env file name</span>
-            <input id="cfgEnvFile" placeholder=".env.development" />
-          </label>
-          <label class="field" title="Ports are handed out from here upwards, one per worktree, and reclaimed when a worktree is removed.">
-            <span>Start port</span>
-            <input id="cfgStartPort" type="number" placeholder="5002" />
-          </label>
-          <label class="field" title="Where worktree folders are created. Defaults to a .worktrees folder next to your repo.">
-            <span>Worktrees folder (optional)</span>
-            <input id="cfgWorktreesRoot" placeholder="sibling .worktrees folder by default" />
-          </label>
-          <label class="field" title="Per-worktree estimated spend above which an optimization tip appears in the cost breakdown.">
-            <span>Cost alert threshold ($)</span>
-            <input id="cfgCostThreshold" type="number" placeholder="20" />
-          </label>
-          <label class="field span-all">
-            <span>Model pricing, $ per 1M tokens (JSON)</span>
-            <textarea id="cfgPricing" rows="5" spellcheck="false"
-              placeholder='{ "claude-sonnet-5": { "input": 2, "output": 10, "cacheWrite": 2.5, "cacheRead": 0.2 } }'></textarea>
           </label>
           <p class="resolved span-all" id="appDirHint"></p>
           <div class="detected span-all" id="detectNote" hidden></div>
         </div>
+
+        <details class="overrides" id="settingsOverrides">
+          <summary>
+            <span class="overrides-label">Override what was detected</span>
+            <span class="overrides-sub">Only if something above is wrong. Clear a field to detect it again.</span>
+          </summary>
+          <div class="settings-grid">
+            <label class="field" title="Relative to the repo root. Detected from where your package.json lives. The dev command, the env file and node_modules all resolve inside this folder.">
+              <span>App subfolder</span>
+              <input id="cfgAppDir" placeholder="detected" />
+            </label>
+            <label class="field" title="Default dev command for new worktrees; each worktree can override it. Some dev servers (Vite) ignore the port env var -- write {port} in the command and it is substituted with that worktree's port.">
+              <span>Dev command</span>
+              <input id="cfgDevCommand" placeholder="detected" list="devCommandOptions" />
+              <small class="hint">Write <code>{port}</code> where the port goes if your dev server ignores the env var.</small>
+            </label>
+            <label class="field" title="The env var your dev server reads its port from. Each worktree gets its own port in this var.">
+              <span>Port env var</span>
+              <input id="cfgPortEnvVar" placeholder="detected" />
+            </label>
+            <label class="field" title="How the dashboard links to your dev servers. Pick https only if your project's dev server already serves TLS -- this does not turn TLS on for you.">
+              <span>Dev server uses</span>
+              <select id="cfgDevServerScheme">
+                <option value="http">http</option>
+                <option value="https">https</option>
+              </select>
+            </label>
+            <label class="field" title="Copied from the app folder of the main repo into each new worktree, with the port var patched to that worktree's port.">
+              <span>Env file name</span>
+              <input id="cfgEnvFile" placeholder="detected" />
+            </label>
+            <label class="field" title="Ports are handed out from here upwards, one per worktree, and reclaimed when a worktree is removed.">
+              <span>Start port</span>
+              <input id="cfgStartPort" type="number" placeholder="5002" />
+            </label>
+            <label class="field" title="Where worktree folders are created. Defaults to a .worktrees folder next to your repo.">
+              <span>Worktrees folder</span>
+              <input id="cfgWorktreesRoot" placeholder="a .worktrees folder next to your repo" />
+            </label>
+            <label class="field" title="Per-worktree estimated spend above which an optimization tip appears in the cost breakdown.">
+              <span>Cost alert ($)</span>
+              <input id="cfgCostThreshold" type="number" placeholder="20" />
+            </label>
+            <label class="field span-all">
+              <span>Model pricing, $ per 1M tokens (JSON)</span>
+              <textarea id="cfgPricing" rows="5" spellcheck="false"
+                placeholder='{ "claude-sonnet-5": { "input": 2, "output": 10, "cacheWrite": 2.5, "cacheRead": 0.2 } }'></textarea>
+            </label>
+          </div>
+        </details>
+
         <div class="settings-foot">
           <span class="form-note" id="configStatus"></span>
           <button class="btn btn-dark" id="saveConfig">Save settings</button>

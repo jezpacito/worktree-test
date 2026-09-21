@@ -149,11 +149,19 @@ function createApp({ dashboardPort } = {}) {
   function detectionFor(config) {
     if (!config.repoPath) return null;
     try {
-      return detect.detectProject({
+      const result = detect.detectProject({
         repoPath: config.repoPath,
         appPath: wt.resolveAppPath(config.repoPath, config.appDir),
         envFileName: config.envFileName || '.env.development'
       });
+      // Said first because it changes what every other line below refers to.
+      if (config.appDir) {
+        result.notes.unshift(
+          `The app is in ${config.appDir}, not at the repo root, so the dev command, `
+          + `the env file and node_modules all resolve inside it.`
+        );
+      }
+      return result;
     } catch {
       return null;
     }
@@ -203,9 +211,25 @@ function createApp({ dashboardPort } = {}) {
     }
     // Detection runs against what the config is ABOUT to become, so switching
     // project and clearing the dev command in one save still detects correctly.
+    const pendingRepo = repoPath || s.config.repoPath;
+    const typedAppDir = appDir !== undefined
+      ? String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '')
+      : s.config.appDir;
+
+    // A blank subfolder means "find the app for me", which answers blank again
+    // for the ordinary repo that keeps its package.json at the root.
+    let foundAppDir = '';
+    if (!typedAppDir && pendingRepo) {
+      try {
+        foundAppDir = detect.detectAppDir(pendingRepo);
+      } catch {
+        foundAppDir = '';
+      }
+    }
+
     const pending = {
-      repoPath: repoPath || s.config.repoPath,
-      appDir: appDir !== undefined ? String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '') : s.config.appDir,
+      repoPath: pendingRepo,
+      appDir: typedAppDir || foundAppDir,
       envFileName: envFileName || s.config.envFileName
     };
     const detected = detectionFor(pending) || {};
@@ -215,13 +239,13 @@ function createApp({ dashboardPort } = {}) {
     s.config = {
       ...s.config,
       ...(repoPath ? { repoPath } : {}),
-      ...(appDir !== undefined ? { appDir: pending.appDir } : {}),
+      appDir: pending.appDir,
       devCommand: devCommand || detected.devCommand || s.config.devCommand,
       devServerScheme: (devServerScheme ? String(devServerScheme).trim().toLowerCase() : null)
         || detected.devServerScheme || s.config.devServerScheme,
       portEnvVar: (portEnvVar ? String(portEnvVar).trim() : null)
         || detected.portEnvVar || s.config.portEnvVar,
-      ...(envFileName ? { envFileName } : {}),
+      envFileName: envFileName || detected.envFileName || s.config.envFileName,
       ...(startPort ? { startPort: Number(startPort) } : {}),
       ...(parsedPricing ? { pricing: parsedPricing } : {}),
       ...(costThreshold !== undefined && costThreshold !== '' ? { costThreshold: Number(costThreshold) } : {}),

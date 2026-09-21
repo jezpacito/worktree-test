@@ -35,6 +35,15 @@ const HTTPS_PACKAGES = ['@vitejs/plugin-basic-ssl', 'vite-plugin-mkcert'];
 
 const SCRIPT_PREFERENCE = ['dev', 'start', 'serve', 'develop'];
 
+// Where an app tends to live when it is not at the repo root. Checked in order,
+// plus every immediate child of the root and of apps/ and packages/.
+const APP_DIR_CANDIDATES = [
+  'app', 'src/renderer', 'src/app', 'client', 'web', 'frontend', 'www', 'site', 'ui'
+];
+
+// Env files in the order a dev server would pick them up.
+const ENV_FILE_CANDIDATES = ['.env.development', '.env.development.local', '.env.local', '.env'];
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -80,6 +89,47 @@ function portVarFromEnvFile(text) {
   return matches.includes('PORT') ? 'PORT' : matches[0];
 }
 
+function hasApp(dir) {
+  const pkg = readJson(path.join(dir, 'package.json'));
+  return !!(pkg && pickDevScript(pkg.scripts));
+}
+
+function childDirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+// Which subfolder the app lives in, for a repo that does not keep package.json
+// at its root -- a monorepo, or an Electron app with the renderer nested. An app
+// AT the root means blank, which is also the answer when nothing is found: the
+// dashboard then behaves exactly as it did before.
+function detectAppDir(repoPath) {
+  if (!repoPath || hasApp(repoPath)) return '';
+
+  const candidates = [...APP_DIR_CANDIDATES];
+  for (const parent of ['apps', 'packages']) {
+    for (const name of childDirs(path.join(repoPath, parent))) candidates.push(`${parent}/${name}`);
+  }
+  for (const name of childDirs(repoPath)) candidates.push(name);
+
+  for (const rel of candidates) {
+    const full = path.join(repoPath, rel);
+    if (full.startsWith(repoPath + path.sep) && hasApp(full)) return rel.replace(/\\/g, '/');
+  }
+  return '';
+}
+
+// The env file the app actually has, rather than one the user has to name.
+function detectEnvFileName(appPath, current) {
+  if (current && fs.existsSync(path.join(appPath, current))) return current;
+  return ENV_FILE_CANDIDATES.find((name) => fs.existsSync(path.join(appPath, name))) || null;
+}
+
 function detectHttps({ deps, devScriptBody, envText, appPath }) {
   const reasons = [];
   for (const pkg of HTTPS_PACKAGES) {
@@ -115,6 +165,7 @@ function detectProject({ repoPath, appPath, envFileName = '.env.development' }) 
     devCommand: null,
     portEnvVar: 'PORT',
     devServerScheme: 'http',
+    envFileName: null,
     framework: null,
     notes: []
   };
@@ -154,7 +205,12 @@ function detectProject({ repoPath, appPath, envFileName = '.env.development' }) 
     result.notes.push('This dev server reads its port from an env var.');
   }
 
-  const envText = readText(path.join(appPath, envFileName));
+  const foundEnvFile = detectEnvFileName(appPath, envFileName);
+  if (foundEnvFile && foundEnvFile !== envFileName) {
+    result.envFileName = foundEnvFile;
+    result.notes.push(`Using ${foundEnvFile}, which is the env file this app actually has.`);
+  }
+  const envText = readText(path.join(appPath, foundEnvFile || envFileName));
   const fromEnv = portVarFromEnvFile(envText);
   if (fromEnv) {
     result.portEnvVar = fromEnv;
@@ -170,4 +226,7 @@ function detectProject({ repoPath, appPath, envFileName = '.env.development' }) 
   return result;
 }
 
-module.exports = { detectProject, pickDevScript, portVarFromEnvFile, withPortFlag, detectHttps };
+module.exports = {
+  detectProject, detectAppDir, detectEnvFileName,
+  pickDevScript, portVarFromEnvFile, withPortFlag, detectHttps
+};

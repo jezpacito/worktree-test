@@ -177,12 +177,17 @@ In **Settings**, fill in:
   dev server actually serves TLS; this decides how the dashboard links to it and
   does not turn TLS on for you.
 
-### You should not have to fill most of this in
+### You only have to fill in the project path
 
-Leave a field blank and the dashboard works it out from your project, and says
-what it based that on. It reads the app's `package.json`, its env file and (for
-Vite) its config:
+Everything else is worked out from the project and folded away under *Override
+what was detected*, which you can ignore unless something comes out wrong. The
+panel lists what was decided and what that was based on. It reads the app's
+`package.json`, its env file and (for Vite) its config:
 
+- **App subfolder** -- found by looking for the `package.json` that has a dev
+  script, so a monorepo (`apps/web`) or a nested renderer needs no setup.
+- **Env file name** -- whichever of `.env.development`, `.env.local` or `.env`
+  the app actually has.
 - **Dev command** -- the `dev` script, or whatever the nearest thing to one is
   called (`dev-mt`, `serve`, `start`).
 - **How the port is passed.** This is the part worth knowing about: some dev
