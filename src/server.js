@@ -10,6 +10,7 @@ const wt = require('./worktrees');
 const git = require('./git');
 const session = require('./session');
 const usage = require('./usage');
+const detect = require('./detect');
 const { reconcile } = require('./reconcile');
 
 // What this machine can actually do, so the UI only offers real actions.
@@ -143,14 +144,29 @@ function createApp({ dashboardPort } = {}) {
 
   // ---- config ----------------------------------------------------------
 
+  // What the project looks like it needs, so the UI can show its reasoning and
+  // leaving a field blank means "work it out for me" rather than "use nothing".
+  function detectionFor(config) {
+    if (!config.repoPath) return null;
+    try {
+      return detect.detectProject({
+        repoPath: config.repoPath,
+        appPath: wt.resolveAppPath(config.repoPath, config.appDir),
+        envFileName: config.envFileName || '.env.development'
+      });
+    } catch {
+      return null;
+    }
+  }
+
   app.get('/api/config', (req, res) => {
     const s = state.load();
-    res.json({ ...s.config, capabilities: capabilities() });
+    res.json({ ...s.config, capabilities: capabilities(), detected: detectionFor(s.config) });
   });
 
   app.post('/api/config', (req, res) => {
     const s = state.load();
-    const { appDir, devCommand, portEnvVar, envFileName, startPort, pricing, costThreshold } = req.body;
+    const { appDir, devCommand, devServerScheme, portEnvVar, envFileName, startPort, pricing, costThreshold } = req.body;
     // Normalized here rather than at each use site, so what lands in state.json
     // is one absolute form no matter how the user typed it or which OS they are on.
     const repoPath = wt.normalizeUserPath(req.body.repoPath);
@@ -167,6 +183,10 @@ function createApp({ dashboardPort } = {}) {
         return res.status(400).json({ error: e.message });
       }
     }
+    if (devServerScheme !== undefined && devServerScheme !== ''
+        && !['http', 'https'].includes(String(devServerScheme).trim().toLowerCase())) {
+      return res.status(400).json({ error: `Dev server scheme must be http or https, got: ${devServerScheme}` });
+    }
     if (portEnvVar !== undefined && portEnvVar !== '' && !ENV_VAR_RE.test(String(portEnvVar).trim())) {
       return res.status(400).json({ error: `Port env var must be a plain identifier (letters, digits, underscore), got: ${portEnvVar}` });
     }
@@ -181,12 +201,26 @@ function createApp({ dashboardPort } = {}) {
         return res.status(400).json({ error: `pricing is not valid JSON: ${e.message}` });
       }
     }
+    // Detection runs against what the config is ABOUT to become, so switching
+    // project and clearing the dev command in one save still detects correctly.
+    const pending = {
+      repoPath: repoPath || s.config.repoPath,
+      appDir: appDir !== undefined ? String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '') : s.config.appDir,
+      envFileName: envFileName || s.config.envFileName
+    };
+    const detected = detectionFor(pending) || {};
+
+    // A field left blank means "detect it". Typing something always wins, and
+    // clearing it again hands control back to detection.
     s.config = {
       ...s.config,
       ...(repoPath ? { repoPath } : {}),
-      ...(appDir !== undefined ? { appDir: String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '') } : {}),
-      ...(devCommand ? { devCommand } : {}),
-      ...(portEnvVar ? { portEnvVar: String(portEnvVar).trim() } : {}),
+      ...(appDir !== undefined ? { appDir: pending.appDir } : {}),
+      devCommand: devCommand || detected.devCommand || s.config.devCommand,
+      devServerScheme: (devServerScheme ? String(devServerScheme).trim().toLowerCase() : null)
+        || detected.devServerScheme || s.config.devServerScheme,
+      portEnvVar: (portEnvVar ? String(portEnvVar).trim() : null)
+        || detected.portEnvVar || s.config.portEnvVar,
       ...(envFileName ? { envFileName } : {}),
       ...(startPort ? { startPort: Number(startPort) } : {}),
       ...(parsedPricing ? { pricing: parsedPricing } : {}),
@@ -195,7 +229,7 @@ function createApp({ dashboardPort } = {}) {
     };
     if (!s.nextPort || s.nextPort < s.config.startPort) s.nextPort = s.config.startPort;
     state.save(s);
-    res.json({ ...s.config, capabilities: capabilities() });
+    res.json({ ...s.config, capabilities: capabilities(), detected: detectionFor(s.config) });
   });
 
   // The port the next worktree would get, so the New Worktree form can pre-fill

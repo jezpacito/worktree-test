@@ -252,4 +252,53 @@ test('a spoofed x-forwarded-host cannot get past the Host check', async () => {
   }
 });
 
+test('saving Settings with the fields blank fills them in from the project', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-vite-'));
+  fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({
+    scripts: { dev: 'vite' },
+    devDependencies: { vite: '^5.0.0', 'vite-plugin-mkcert': '^1.17.0' }
+  }));
+  fs.mkdirSync(path.join(repo, '.git'));
+
+  const { server, base } = await listen(createApp());
+  try {
+    const res = await fetch(`${base}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoPath: repo, devCommand: '', portEnvVar: '', devServerScheme: '' })
+    });
+    const cfg = await res.json();
+    assert.equal(cfg.devCommand, 'npm run dev -- --port {port}', 'vite needs the flag, not PORT=');
+    assert.equal(cfg.devServerScheme, 'https');
+    assert.ok(cfg.detected.notes.some((n) => /ignores a PORT env var/.test(n)));
+
+    // ...and a value typed by hand is never overwritten by detection
+    const override = await (await fetch(`${base}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devCommand: 'pnpm serve --port {port}', devServerScheme: 'http' })
+    })).json();
+    assert.equal(override.devCommand, 'pnpm serve --port {port}');
+    assert.equal(override.devServerScheme, 'http');
+  } finally {
+    server.close();
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/config rejects a dev server scheme that is not http or https', async () => {
+  const { server, base } = await listen(createApp());
+  try {
+    const res = await fetch(`${base}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devServerScheme: 'ftp' })
+    });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /http or https/);
+  } finally {
+    server.close();
+  }
+});
+
 test.after(() => fs.rmSync(FAKE_HOME, { recursive: true, force: true }));

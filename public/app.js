@@ -21,6 +21,7 @@ async function loadConfig() {
   $('cfgRepoPath').value = config.repoPath || '';
   $('cfgAppDir').value = config.appDir || '';
   $('cfgDevCommand').value = config.devCommand || '';
+  $('cfgDevServerScheme').value = config.devServerScheme || 'http';
   $('cfgPortEnvVar').value = config.portEnvVar || '';
   $('cfgEnvFile').value = config.envFileName || '';
   $('cfgStartPort').value = config.startPort || '';
@@ -28,6 +29,7 @@ async function loadConfig() {
   $('cfgCostThreshold').value = config.costThreshold ?? '';
   $('cfgPricing').value = JSON.stringify(config.pricing || {}, null, 2);
   renderAppDirHint();
+  renderDetection();
   renderBrandSub();
   $('newDevCommand').placeholder = config.devCommand || 'npm run dev';
   await Promise.all([loadNextPort(), loadScriptSuggestions()]);
@@ -72,6 +74,23 @@ function renderBrandSub() {
   $('brandSub').textContent = `${location.host || `localhost:${config.dashboardPort || 4999}`} · ${name}`;
 }
 
+// Show what was worked out about the project and why. The point is that the
+// port plumbing is not something to configure by hand -- but a silent guess is
+// worse than no guess, so every decision says what it was based on.
+function renderDetection() {
+  const box = $('detectNote');
+  const d = config.detected;
+  if (!d || !d.notes || !d.notes.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `<span class="detected-title">Detected automatically</span><ul>`
+    + d.notes.map((n) => `<li>${esc(n)}</li>`).join('')
+    + `</ul><span class="detected-foot">Clear a field above to have it worked out again; typing in it overrides this.</span>`;
+}
+
 // Echo where the dev command will actually run, so a wrong subfolder is
 // obvious before any worktree gets created.
 function renderAppDirHint() {
@@ -108,6 +127,7 @@ $('saveConfig').addEventListener('click', async () => {
         repoPath: $('cfgRepoPath').value.trim(),
         appDir: $('cfgAppDir').value.trim(),
         devCommand: $('cfgDevCommand').value.trim(),
+        devServerScheme: $('cfgDevServerScheme').value,
         portEnvVar: $('cfgPortEnvVar').value.trim(),
         envFileName: $('cfgEnvFile').value.trim(),
         startPort: $('cfgStartPort').value.trim(),
@@ -230,13 +250,15 @@ function shortPath(full) {
 const CHEVRON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const KEBAB = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
 
-// Dev servers speak plain http, whatever scheme the dashboard itself was
-// served over -- an https dashboard linking to https://localhost:5002 would
-// just fail to connect. The host follows the address bar so the link still
-// points at the right machine when the dashboard is reached through a proxy.
+// The scheme is the PROJECT's, not the dashboard's: an https dashboard in front
+// of a plain dev server must still link to http, and a project whose dev server
+// serves TLS needs https even when the dashboard itself is plain. Hence the
+// explicit setting rather than copying location.protocol. The host does follow
+// the address bar, so the link points at the right machine behind a proxy.
 function devServerOrigin(port) {
+  const scheme = config.devServerScheme === 'https' ? 'https' : 'http';
   const host = location.hostname || 'localhost';
-  return `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
+  return `${scheme}://${host.includes(':') ? `[${host}]` : host}:${port}`;
 }
 
 // The port cell links to the dev server. It stays clickable when idle -- the

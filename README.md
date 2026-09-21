@@ -173,6 +173,31 @@ In **Settings**, fill in:
   `VITE_PORT`, `NEXT_PUBLIC_PORT`. Set in the terminal and written into the
   env file for every worktree.
 - **Env file name** -- e.g. `.env.development`.
+- **Dev server uses** -- `http` or `https`. Only pick `https` if your project's
+  dev server actually serves TLS; this decides how the dashboard links to it and
+  does not turn TLS on for you.
+
+### You should not have to fill most of this in
+
+Leave a field blank and the dashboard works it out from your project, and says
+what it based that on. It reads the app's `package.json`, its env file and (for
+Vite) its config:
+
+- **Dev command** -- the `dev` script, or whatever the nearest thing to one is
+  called (`dev-mt`, `serve`, `start`).
+- **How the port is passed.** This is the part worth knowing about: some dev
+  servers take the port from an env var, and some ignore that var completely.
+  Vite, Angular, webpack-dev-server and friends only accept `--port`, so the
+  detected command comes out as `npm run dev -- --port {port}` -- the dashboard
+  substitutes each worktree's port there. Get this wrong and every worktree
+  starts on the same default port and they fight over it.
+- **Port env var** -- taken from whatever your env file already calls it
+  (`PORT`, `VITE_PORT`, `APP_PORT`), since that is the one your code reads.
+- **Dev server uses** -- `https` if the project shows signs of it: a TLS plugin
+  like `vite-plugin-mkcert`, `--experimental-https` in the dev script,
+  `HTTPS=true` in the env file, or `server.https` in a Vite config.
+
+Typing in a field always wins. Clearing it hands that field back to detection.
 - **Start port** -- defaults to `5002`.
 - **Cost alert threshold ($)** -- a worktree that has cost more than this
   gets a "split the task / clear context" tip. Defaults to `20`.

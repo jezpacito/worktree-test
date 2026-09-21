@@ -29,6 +29,8 @@ const DEFAULT_STATE = {
                              // blank means the app is at the repo root. The dev command,
                              // the env file and node_modules all resolve inside it.
     devCommand: 'npm run dev', // command used to start the dev server
+    devServerScheme: 'http', // 'https' for a project whose dev server serves TLS;
+                             // only decides how the dashboard links to it
     portEnvVar: 'PORT',      // env var name the dev command reads for its port
     envFileName: '.env.development',
     startPort: 5002,
