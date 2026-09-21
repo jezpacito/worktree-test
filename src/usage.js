@@ -41,6 +41,19 @@ function encodeProjectPath(p) {
   return p.replace(/[\\/]/g, '-');
 }
 
+// The CLI's directory naming has varied across versions in which characters
+// besides the separators get flattened to '-'. Rather than guess one rule --
+// and it matters here, because the default worktrees root is a dot-directory --
+// every plausible encoding is tried and only an EXACT directory match counts.
+function candidateEncodings(p) {
+  return [
+    p.replace(/[\\/]/g, '-'),
+    p.replace(/[\\/.]/g, '-'),
+    p.replace(/[\\/._ ]/g, '-'),
+    p.replace(/[^A-Za-z0-9]/g, '-')
+  ];
+}
+
 function emptyBucket() {
   const b = {};
   for (const f of TOKEN_FIELDS) b[f] = 0;
@@ -72,16 +85,23 @@ function collectUsage(obj, perModel, contextModel) {
   }
 }
 
+// Deliberately no substring or basename fallback. Matching loosely meant two
+// worktrees with the same folder name under different roots collapsed onto one
+// transcript directory: costs were attributed to the wrong branch, and
+// transcriptExists answered about the wrong conversation, which made the
+// launcher pass --session-id for an id the CLI already knew. Finding nothing is
+// the honest answer -- it just reports usage as unavailable.
 function findProjectLogDir(worktreePath, projectsDir = CLAUDE_PROJECTS_DIR) {
   if (!fs.existsSync(projectsDir)) return null;
-  const encoded = encodeProjectPath(worktreePath);
-  const candidates = fs.readdirSync(projectsDir);
-  let match = candidates.find((c) => c === encoded || c.includes(encoded));
-  if (!match) {
-    const base = path.basename(worktreePath);
-    match = candidates.find((c) => c.includes(base));
+  for (const encoded of new Set(candidateEncodings(worktreePath))) {
+    const dir = path.join(projectsDir, encoded);
+    try {
+      if (fs.statSync(dir).isDirectory()) return dir;
+    } catch {
+      // not this encoding
+    }
   }
-  return match ? path.join(projectsDir, match) : null;
+  return null;
 }
 
 // Has this worktree's Claude session actually been written to disk? Resuming a
@@ -94,62 +114,79 @@ function transcriptExists(worktreePath, sessionId, projectsDir = CLAUDE_PROJECTS
   return fs.existsSync(path.join(dir, `${sessionId}.jsonl`));
 }
 
-// Cheap re-parse guard: key a cached result by the set of (file, mtime, size)
-// for the project dir. The 5s dashboard refresh hits this constantly.
+// Cheap re-parse guard, keyed per FILE by (path, mtime, size). The dashboard
+// refreshes every 5s; keying per directory meant one appended line re-parsed
+// every transcript in it, which is the expensive case in a long-lived project.
+// Bounded so a machine with many projects cannot grow this without limit.
 const _cache = new Map();
+const CACHE_MAX = 500;
 
-function dirFingerprint(dir, files) {
-  return files
-    .map((f) => {
-      try {
-        const st = fs.statSync(path.join(dir, f));
-        return `${f}:${st.mtimeMs}:${st.size}`;
-      } catch {
-        return `${f}:?`;
-      }
-    })
-    .sort()
-    .join('|');
+function cacheGet(key) {
+  if (!_cache.has(key)) return null;
+  // refresh LRU position
+  const value = _cache.get(key);
+  _cache.delete(key);
+  _cache.set(key, value);
+  return value;
+}
+
+function cacheSet(key, value) {
+  _cache.set(key, value);
+  while (_cache.size > CACHE_MAX) _cache.delete(_cache.keys().next().value);
 }
 
 function usageForWorktree(worktreePath) {
   const dir = findProjectLogDir(worktreePath);
   if (!dir) return { available: false, perModel: {}, totals: emptyBucket(), sessions: [] };
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
-  const fp = dirFingerprint(dir, files);
-  const cached = _cache.get(dir);
-  if (cached && cached.fp === fp) return cached.value;
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return { available: false, perModel: {}, totals: emptyBucket(), sessions: [] };
+  }
 
   const perModel = {};
   const sessions = [];
 
   for (const f of files) {
     const full = path.join(dir, f);
-    let raw;
-    let mtime = null;
+    let st;
     try {
-      raw = fs.readFileSync(full, 'utf8');
-      mtime = fs.statSync(full).mtime.toISOString();
+      st = fs.statSync(full);
     } catch {
       continue;
     }
-    const sessionPerModel = {};
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
+
+    const key = `${full}:${st.mtimeMs}:${st.size}`;
+    let session = cacheGet(key);
+    if (!session) {
+      let raw;
       try {
-        collectUsage(JSON.parse(line), sessionPerModel);
+        raw = fs.readFileSync(full, 'utf8');
       } catch {
-        // ignore malformed lines
+        continue;
       }
+      const sessionPerModel = {};
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          collectUsage(JSON.parse(line), sessionPerModel);
+        } catch {
+          // ignore malformed lines
+        }
+      }
+      const sessionTotals = emptyBucket();
+      for (const m of Object.keys(sessionPerModel)) addInto(sessionTotals, sessionPerModel[m]);
+      session = { file: f, mtime: st.mtime.toISOString(), perModel: sessionPerModel, totals: sessionTotals };
+      cacheSet(key, session);
     }
-    const sessionTotals = emptyBucket();
-    for (const m of Object.keys(sessionPerModel)) {
-      addInto(sessionTotals, sessionPerModel[m]);
+
+    for (const m of Object.keys(session.perModel)) {
       if (!perModel[m]) perModel[m] = emptyBucket();
-      addInto(perModel[m], sessionPerModel[m]);
+      addInto(perModel[m], session.perModel[m]);
     }
-    sessions.push({ file: f, mtime, perModel: sessionPerModel, totals: sessionTotals });
+    sessions.push(session);
   }
 
   sessions.sort((a, b) => (a.mtime || '').localeCompare(b.mtime || ''));
@@ -157,9 +194,7 @@ function usageForWorktree(worktreePath) {
   const totals = emptyBucket();
   for (const m of Object.keys(perModel)) addInto(totals, perModel[m]);
 
-  const value = { available: true, perModel, totals, sessions };
-  _cache.set(dir, { fp, value });
-  return value;
+  return { available: true, perModel, totals, sessions };
 }
 
 function totalTokens(totals) {

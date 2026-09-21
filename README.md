@@ -56,7 +56,15 @@ project's own config files and without needing admin rights on Windows.
   worktree root in your editor. Neither is tracked as a session: closing the
   terminal doesn't change the row's status.
 - **Allocates ports starting at 5002**, incrementing for each new worktree,
-  and reclaims a port once you remove that worktree.
+  and reclaims a port once you remove that worktree. The New worktree form
+  pre-fills the next free port; overwrite it to pin a worktree to a port you
+  choose. A port that is out of range, already assigned, or actually in use on
+  the machine is rejected before the worktree is created.
+- **Per-worktree dev command.** Settings holds the project default; the New
+  worktree form starts from that default and lets you override it for one
+  worktree -- useful when a project has `npm run dev`, `npm run dev-mt`,
+  `npm run dev-tt` and so on. The box suggests your project's own npm scripts.
+  Whatever you pick is remembered, so later launches of that worktree reuse it.
 - **Launches a real terminal per worktree** (Windows Terminal if installed,
   otherwise a plain PowerShell window) that starts your dev server in the
   background and runs `claude` in the foreground. The dev server -- and the
@@ -79,7 +87,10 @@ project's own config files and without needing admin rights on Windows.
 - **Auto-commits (never auto-pushes)** when you exit a Claude session, so
   work-in-progress is always saved locally. Pushing and opening a PR only
   happens when you click "Push & create PR" in the dashboard -- that's the
-  explicit confirmation step.
+  explicit confirmation step. The env file this tool wrote into the worktree is
+  kept out of that commit unless your project already gitignores it, so a
+  per-worktree port -- and whatever else that file holds -- never rides along
+  into a branch you push.
 - **Dashboard view** of every worktree: branch, path, port, status, an
   estimated dollar cost, and a best-effort token count -- per worktree and
   in total. The table has a branch filter and pages 10 at a time.
@@ -138,7 +149,12 @@ npm start
 ```
 
 This starts the dashboard at `http://localhost:4999`. Open that in your
-browser (or a VS Code Simple Browser tab).
+browser (or a VS Code Simple Browser tab). If that port is taken or blocked on
+your machine, set another one:
+
+```bash
+WTD_PORT=5050 npm start
+```
 
 In **Settings**, fill in:
 - **Project path** -- the root of your main repo checkout (where `.git` lives).
@@ -146,10 +162,47 @@ In **Settings**, fill in:
   `src/renderer` for a layout like `root-project/src/renderer`, i.e. wherever
   the `package.json` with your `dev` script lives. Leave blank if that's the
   repo root. A hint under the form shows the full path it resolves to.
-- **Dev command** -- e.g. `npm run dev`. Runs inside the app subfolder.
+- **Dev command (default)** -- e.g. `npm run dev`. Runs inside the app
+  subfolder, and can be overridden per worktree when you create one.
+  Some dev servers ignore the port env var entirely -- **Vite is the common
+  case**: it reads `--port`, never `PORT`. Write `{port}` anywhere in the
+  command and it is replaced with that worktree's port, e.g.
+  `npm run dev -- --port {port}`. If your worktrees all start on the same
+  wrong port, this is the setting you want.
 - **Port env var** -- whatever your dev server reads for its port, e.g. `PORT`,
-  `VITE_PORT`, `NEXT_PUBLIC_PORT`.
+  `VITE_PORT`, `NEXT_PUBLIC_PORT`. Set in the terminal and written into the
+  env file for every worktree.
 - **Env file name** -- e.g. `.env.development`.
+- **Dev server uses** -- `http` or `https`. Only pick `https` if your project's
+  dev server actually serves TLS; this decides how the dashboard links to it and
+  does not turn TLS on for you.
+
+### You only have to fill in the project path
+
+Everything else is worked out from the project and folded away under *Override
+what was detected*, which you can ignore unless something comes out wrong. The
+panel lists what was decided and what that was based on. It reads the app's
+`package.json`, its env file and (for Vite) its config:
+
+- **App subfolder** -- found by looking for the `package.json` that has a dev
+  script, so a monorepo (`apps/web`) or a nested renderer needs no setup.
+- **Env file name** -- whichever of `.env.development`, `.env.local` or `.env`
+  the app actually has.
+- **Dev command** -- the `dev` script, or whatever the nearest thing to one is
+  called (`dev-mt`, `serve`, `start`).
+- **How the port is passed.** This is the part worth knowing about: some dev
+  servers take the port from an env var, and some ignore that var completely.
+  Vite, Angular, webpack-dev-server and friends only accept `--port`, so the
+  detected command comes out as `npm run dev -- --port {port}` -- the dashboard
+  substitutes each worktree's port there. Get this wrong and every worktree
+  starts on the same default port and they fight over it.
+- **Port env var** -- taken from whatever your env file already calls it
+  (`PORT`, `VITE_PORT`, `APP_PORT`), since that is the one your code reads.
+- **Dev server uses** -- `https` if the project shows signs of it: a TLS plugin
+  like `vite-plugin-mkcert`, `--experimental-https` in the dev script,
+  `HTTPS=true` in the env file, or `server.https` in a Vite config.
+
+Typing in a field always wins. Clearing it hands that field back to detection.
 - **Start port** -- defaults to `5002`.
 - **Cost alert threshold ($)** -- a worktree that has cost more than this
   gets a "split the task / clear context" tip. Defaults to `20`.
@@ -158,8 +211,11 @@ In **Settings**, fill in:
   used for model ids not listed. Seeded from the public Claude price list.
 
 Then, for each new task:
-1. Type a branch name (and optionally a base ref, default `HEAD`), leave
-   **Run Claude in this session** ticked, and click **Create worktree**.
+1. Type a branch name (and optionally a base ref, default `HEAD`). The
+   **Port** box is pre-filled with the next free port and **Dev command**
+   with your project default -- change either if this worktree needs a
+   different one. Leave **Run Claude in this session** ticked and click
+   **Create worktree**.
 2. A terminal opens with your dev server running in the background and
    `claude` running in the foreground. Run your company skill / do your work
    as normal.
@@ -176,7 +232,7 @@ Every other per-row action lives in that same **⋯** menu:
 | **Open Claude session** | Just the Claude conversation for that worktree, resumed. No dev server, no port taken, nothing committed when you exit, and the row's status is untouched -- for checking back on a session without starting anything. |
 | **Open terminal** | A shell in that worktree's app folder with the port env var already exported. |
 | **Open in VS Code** | Opens the worktree root. Needs the `code` CLI on your PATH (in VS Code: *Shell Command: Install 'code' command in PATH*). |
-| **Commit now** | Commits everything in that worktree. Never pushes. |
+| **Commit now** | Commits everything in that worktree, except the env file this tool patched. Never pushes. |
 | **Reinstall deps** | Swaps the shared `node_modules` junction for a real `npm install` in that worktree. |
 | **Start a fresh Claude session** | Rotates the stored session id, so the next **Start** begins a new conversation rather than resuming. |
 | **Remove worktree** | Deletes the folder. The branch and its commits are kept. |
@@ -184,6 +240,36 @@ Every other per-row action lives in that same **⋯** menu:
 **Start** and **Mark idle** stay outside the menu as the row's primary button.
 **Mark idle** only resets the record and frees the port -- it does not stop a
 process, so use it after you have closed the terminal yourself.
+
+## What the dashboard will and won't let happen
+
+It listens on `127.0.0.1` only, and on top of that:
+
+- **Requests must be addressed to localhost.** A page you visit cannot point its
+  own domain at `127.0.0.1` and then drive this API -- the request still carries
+  that domain in its `Host` header, and it is refused. Cross-origin writes are
+  refused too. `https://localhost` is fine: the scheme is not what is being
+  checked, so a local TLS front-end works unchanged. If you publish the
+  dashboard through a proxy under some other name, say so explicitly:
+
+  ```
+  WTD_ALLOWED_HOSTS=wtd.internal,dash.localhost wtd start
+  ```
+
+  `X-Forwarded-Host` is deliberately ignored -- anyone can set it, so trusting
+  it would hand back the bypass this check exists to close.
+- **The auto-commit callback is token-gated.** Each launch mints a token that
+  only the terminal window it opened knows, so nothing else on the machine can
+  declare your session over and set a commit running. The token is never sent
+  to the browser.
+- **Nothing is pushed without a click.** Auto-commit is local. "Push & create
+  PR" is the only thing that talks to your remote, and if the push lands but
+  `gh` fails, the row says so rather than pretending the PR exists.
+- **Names are escaped, not trusted.** Branch names reach shell scripts as folder
+  paths; they are escaped for both bash and PowerShell. Extra Claude arguments
+  containing shell metacharacters are rejected outright.
+- **state.json is written atomically** and, if it is ever unreadable, kept as a
+  `.corrupt-<timestamp>` copy rather than silently replaced with defaults.
 
 ## Running the tests
 

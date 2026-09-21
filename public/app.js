@@ -21,6 +21,7 @@ async function loadConfig() {
   $('cfgRepoPath').value = config.repoPath || '';
   $('cfgAppDir').value = config.appDir || '';
   $('cfgDevCommand').value = config.devCommand || '';
+  $('cfgDevServerScheme').value = config.devServerScheme || 'http';
   $('cfgPortEnvVar').value = config.portEnvVar || '';
   $('cfgEnvFile').value = config.envFileName || '';
   $('cfgStartPort').value = config.startPort || '';
@@ -28,13 +29,66 @@ async function loadConfig() {
   $('cfgCostThreshold').value = config.costThreshold ?? '';
   $('cfgPricing').value = JSON.stringify(config.pricing || {}, null, 2);
   renderAppDirHint();
+  renderDetection();
   renderBrandSub();
+  $('newDevCommand').placeholder = config.devCommand || 'npm run dev';
+  await Promise.all([loadNextPort(), loadScriptSuggestions()]);
 }
+
+// Pre-fill the port box with the port this worktree would get anyway, so the
+// common case is "leave it alone" and the override is one edit away.
+async function loadNextPort() {
+  const input = $('newPort');
+  if (input.dataset.touched === '1') return;
+  try {
+    const { port } = await api('/api/next-port');
+    input.value = port;
+  } catch {
+    input.value = '';
+  }
+}
+
+// Offer the project's own npm scripts (npm run dev, dev-mt, dev-tt, ...) as
+// dev-command suggestions, rather than making the user remember them.
+async function loadScriptSuggestions() {
+  try {
+    const { commands } = await api('/api/scripts');
+    $('devCommandOptions').innerHTML = (commands || [])
+      .map((c) => `<option value="${esc(c)}"></option>`).join('');
+  } catch {
+    $('devCommandOptions').innerHTML = '';
+  }
+}
+
+// Once you type a port yourself, refreshes stop overwriting it -- until the
+// next successful create, which hands back a clean suggestion.
+$('newPort').addEventListener('input', () => {
+  $('newPort').dataset.touched = $('newPort').value.trim() ? '1' : '';
+});
 
 function renderBrandSub() {
   const repo = config.repoPath || '';
   const name = repo ? repo.split(/[\\/]/).filter(Boolean).pop() : 'no project set';
-  $('brandSub').textContent = `localhost:${config.dashboardPort || 4999} · ${name}`;
+  // The address actually in use, not the configured one: WTD_PORT, a proxy or
+  // an https front-end all make those differ.
+  $('brandSub').textContent = `${location.host || `localhost:${config.dashboardPort || 4999}`} · ${name}`;
+}
+
+// Show what was worked out about the project and why. The point is that the
+// port plumbing is not something to configure by hand -- but a silent guess is
+// worse than no guess, so every decision says what it was based on.
+function renderDetection() {
+  const box = $('detectNote');
+  const d = config.detected;
+  if (!d || !d.notes || !d.notes.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `<span class="detected-title">Detected automatically</span><ul>`
+    + d.notes.map((n) => `<li>${esc(n)}</li>`).join('')
+    + `</ul><span class="detected-foot">Clear a field above to have it worked out again; typing in it overrides this.</span>`;
 }
 
 // Echo where the dev command will actually run, so a wrong subfolder is
@@ -73,6 +127,7 @@ $('saveConfig').addEventListener('click', async () => {
         repoPath: $('cfgRepoPath').value.trim(),
         appDir: $('cfgAppDir').value.trim(),
         devCommand: $('cfgDevCommand').value.trim(),
+        devServerScheme: $('cfgDevServerScheme').value,
         portEnvVar: $('cfgPortEnvVar').value.trim(),
         envFileName: $('cfgEnvFile').value.trim(),
         startPort: $('cfgStartPort').value.trim(),
@@ -97,6 +152,8 @@ $('createWorktree').addEventListener('click', async () => {
   const btn = $('createWorktree');
   const branch = $('newBranch').value.trim();
   const baseRef = $('newBaseRef').value.trim();
+  const port = $('newPort').value.trim();
+  const devCommand = $('newDevCommand').value.trim();
   const withClaude = $('newWithClaude').checked;
   status.className = 'form-note';
   if (!branch) {
@@ -107,11 +164,17 @@ $('createWorktree').addEventListener('click', async () => {
   btn.disabled = true;
   status.textContent = 'Creating the worktree and opening a terminal…';
   try {
-    const w = await api('/api/worktrees', { method: 'POST', body: JSON.stringify({ branch, baseRef, withClaude }) });
+    const w = await api('/api/worktrees', {
+      method: 'POST',
+      body: JSON.stringify({ branch, baseRef, port, devCommand, withClaude })
+    });
     status.className = 'form-note ok';
-    status.textContent = `${w.branch} is running on port ${w.port}.`;
+    status.textContent = `${w.branch} is running on port ${w.port} via \`${w.devCommand || config.devCommand}\`.`;
     $('newBranch').value = '';
     $('newBaseRef').value = '';
+    $('newDevCommand').value = '';
+    $('newPort').dataset.touched = '';
+    await loadNextPort();
     await refresh();
   } catch (e) {
     status.className = 'form-note error';
@@ -133,6 +196,7 @@ const TONES = {
   'session-exited':         { tone: 'idle',    label: 'Session ended' },
   'no-changes':             { tone: 'idle',    label: 'No changes' },
   'committed-pending-push': { tone: 'pending', label: 'Committed, not pushed' },
+  'pushed-no-pr':           { tone: 'pending', label: 'Pushed, PR not created' },
   'pr-created':             { tone: 'done',    label: 'PR created' },
   'discovered':             { tone: 'found',   label: 'Discovered' },
   'missing':                { tone: 'gone',    label: 'Folder missing' }
@@ -186,13 +250,25 @@ function shortPath(full) {
 const CHEVRON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const KEBAB = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>';
 
+// The scheme is the PROJECT's, not the dashboard's: an https dashboard in front
+// of a plain dev server must still link to http, and a project whose dev server
+// serves TLS needs https even when the dashboard itself is plain. Hence the
+// explicit setting rather than copying location.protocol. The host does follow
+// the address bar, so the link points at the right machine behind a proxy.
+function devServerOrigin(port) {
+  const scheme = config.devServerScheme === 'https' ? 'https' : 'http';
+  const host = location.hostname || 'localhost';
+  return `${scheme}://${host.includes(':') ? `[${host}]` : host}:${port}`;
+}
+
 // The port cell links to the dev server. It stays clickable when idle -- the
 // port is still that worktree's -- but is dimmed so you can tell it is not up.
 function portCell(w) {
   if (w.port == null) return '<span class="empty-cell">—</span>';
-  const url = `http://localhost:${w.port}`;
+  const url = devServerOrigin(w.port);
   const live = isRunning(w.status);
-  const title = live ? `Open ${url}` : `Open ${url}. The dev server is not running — start it first.`;
+  const cmd = w.devCommand ? `\nDev command: ${w.devCommand}` : '';
+  const title = (live ? `Open ${url}` : `Open ${url}. The dev server is not running — start it first.`) + cmd;
   return `<a class="port-link${live ? '' : ' dim'}" href="${url}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">${w.port}</a>`;
 }
 

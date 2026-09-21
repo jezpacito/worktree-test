@@ -382,3 +382,269 @@ test('wslWindowArgs: opens a Windows Terminal tab back into the distro', () => {
   assert.deepStrictEqual(args.slice(0, 6), ['new-tab', '--title', 'wt:abc', 'wsl.exe', '-d', 'Ubuntu-24.04']);
   assert.ok(args.join(' ').includes('/tmp/s.sh'));
 });
+
+// ---- port choice, dev command, and path normalization ---------------------
+
+const ports = require('../src/ports');
+
+function stateWith(worktrees, { startPort = 5002, nextPort = 5002 } = {}) {
+  return { config: { startPort }, worktrees, nextPort };
+}
+
+test('validatePort: rejects non-integers and out-of-range values', async () => {
+  const s = stateWith({});
+  await assert.rejects(() => ports.validatePort('abc', s), /whole number/);
+  await assert.rejects(() => ports.validatePort('50.5', s), /whole number/);
+  await assert.rejects(() => ports.validatePort(80, s), /between 1024 and 65535/);
+  await assert.rejects(() => ports.validatePort(70000, s), /between 1024 and 65535/);
+});
+
+test('validatePort: rejects a port already assigned to another worktree', async () => {
+  const s = stateWith({ a: { id: 'a', branch: 'feature/x', port: 5002 } });
+  await assert.rejects(() => ports.validatePort(5002, s), /already assigned .*feature\/x/);
+});
+
+test('validatePort: the worktree already holding the port may keep it', async () => {
+  const s = stateWith({ a: { id: 'a', branch: 'feature/x', port: 5002 } });
+  assert.equal(await ports.validatePort(5002, s, { excludeId: 'a' }), 5002);
+});
+
+test('validatePort: accepts a free port and returns it as a number', async () => {
+  const s = stateWith({});
+  assert.strictEqual(await ports.validatePort('5399', s), 5399);
+});
+
+test('findFreePort peeks without consuming; allocatePort advances nextPort', async () => {
+  const s = stateWith({}, { startPort: 5210, nextPort: 5210 });
+  const peeked = await ports.findFreePort(s);
+  assert.equal(s.nextPort, 5210, 'peeking must not move the cursor');
+  const taken = await ports.allocatePort(s);
+  assert.equal(taken, peeked);
+  assert.equal(s.nextPort, peeked + 1);
+});
+
+test('findFreePort skips ports already assigned to worktrees', async () => {
+  const s = stateWith(
+    { a: { id: 'a', branch: 'x', port: 5310 }, b: { id: 'b', branch: 'y', port: 5311 } },
+    { startPort: 5310, nextPort: 5310 }
+  );
+  assert.equal(await ports.findFreePort(s), 5312);
+});
+
+test('applyPortPlaceholder: substitutes every {port}, leaves other commands alone', () => {
+  assert.equal(
+    session.applyPortPlaceholder('npm run dev-mt -- --port {port}', 5002),
+    'npm run dev-mt -- --port 5002'
+  );
+  assert.equal(
+    session.applyPortPlaceholder('serve --port {port} --admin {port}', 4100),
+    'serve --port 4100 --admin 4100'
+  );
+  assert.equal(session.applyPortPlaceholder('npm run dev', 5002), 'npm run dev');
+  assert.equal(session.applyPortPlaceholder('', 5002), '');
+  assert.equal(session.applyPortPlaceholder(undefined, 5002), '');
+});
+
+test('applyPortPlaceholder: no port yet leaves the placeholder visible', () => {
+  assert.equal(
+    session.applyPortPlaceholder('npm run dev -- --port {port}', null),
+    'npm run dev -- --port {port}'
+  );
+});
+
+test('script builders substitute {port} into the dev command', () => {
+  const args = {
+    worktreePath: '/repo/.worktrees/wt-feature',
+    appPath: '/repo/.worktrees/wt-feature/app',
+    port: 5007,
+    portEnvVar: 'PORT',
+    devCommand: 'npm run dev-tt -- --port {port}',
+    dashboardPort: 4999,
+    worktreeId: 'id-1',
+    claudeArgs: '--session-id 00000000-0000-4000-8000-000000000000'
+  };
+  const scripts = [
+    session.buildPowerShellScript({ ...args, withClaude: true }),
+    session.buildPowerShellScript({ ...args, withClaude: false }),
+    session.buildTerminalScript(args),
+    session.buildBashSessionScript({ ...args, withClaude: true }),
+    session.buildBashSessionScript({ ...args, withClaude: false }),
+    session.buildBashTerminalScript(args)
+  ];
+  for (const s of scripts) {
+    assert.match(s, /--port 5007/, 'placeholder should be substituted');
+    assert.ok(!s.includes('{port}'), 'no raw placeholder should survive');
+  }
+});
+
+test('normalizeUserPath: strips quotes, whitespace and trailing separators', () => {
+  const base = path.join(os.tmpdir(), 'wtd-norm');
+  assert.equal(wt.normalizeUserPath(`  "${base}"  `), path.resolve(base));
+  assert.equal(wt.normalizeUserPath(`${base}${path.sep}`), path.resolve(base));
+  assert.equal(wt.normalizeUserPath("'" + base + "'"), path.resolve(base));
+});
+
+test('normalizeUserPath: blank input stays blank rather than becoming cwd', () => {
+  assert.equal(wt.normalizeUserPath(''), '');
+  assert.equal(wt.normalizeUserPath('   '), '');
+  assert.equal(wt.normalizeUserPath(null), '');
+  assert.equal(wt.normalizeUserPath(undefined), '');
+});
+
+test('listScripts: reads npm script names from the app package.json', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-scripts-'));
+  fs.mkdirSync(path.join(dir, 'app'));
+  fs.writeFileSync(
+    path.join(dir, 'app', 'package.json'),
+    JSON.stringify({ scripts: { dev: 'vite', 'dev-mt': 'vite --mode mt', 'dev-tt': 'vite --mode tt' } })
+  );
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: 'app' }), ['dev', 'dev-mt', 'dev-tt']);
+});
+
+test('listScripts: missing or unreadable package.json yields no suggestions', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-scripts-'));
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: '' }), []);
+  fs.writeFileSync(path.join(dir, 'package.json'), 'not json');
+  assert.deepEqual(wt.listScripts({ repoPath: dir, appDir: '' }), []);
+  assert.deepEqual(wt.listScripts({ repoPath: null, appDir: '' }), []);
+});
+
+// ---- reconcile: a failed git call must not look like "no worktrees" -------
+
+test('reconcile: a git failure leaves every record alone', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-test-'));
+  const notARepo = path.join(tmp, 'not-a-repo');
+  const live = path.join(tmp, 'wt-live');
+  fs.mkdirSync(notARepo);
+  fs.mkdirSync(live);
+
+  const s = {
+    config: { repoPath: notARepo },
+    worktrees: {
+      a: { id: 'a', path: live, branch: 'live', status: 'session-running', tracked: true, sessionPid: 42 }
+    }
+  };
+  // No gitList injected, and repoPath is not a git repo -> listGitWorktrees throws.
+  await reconcile(s);
+
+  assert.equal(s.worktrees.a.status, 'session-running', 'must not be downgraded to missing');
+  assert.equal(s.worktrees.a.sessionPid, 42);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// ---- ports: reclamation and reservations ---------------------------------
+
+test('findFreePort reuses a port freed by a removed worktree', async () => {
+  // nextPort has drifted upwards, but 5320 is free again: it must come back.
+  const s = { config: { startPort: 5320 }, worktrees: {}, nextPort: 5400 };
+  assert.equal(await ports.findFreePort(s), 5320);
+});
+
+test('reserve holds a port until the worktree record exists', async () => {
+  const s = { config: { startPort: 5330 }, worktrees: {}, nextPort: 5330, reservations: {} };
+  const first = await ports.allocatePort(s);
+  ports.reserve(s, first);
+  const second = await ports.findFreePort(s);
+  assert.notEqual(second, first, 'a concurrent create must not get the same port');
+  await assert.rejects(() => ports.validatePort(first, s), /being created/);
+
+  ports.release(s, first);
+  assert.equal(await ports.findFreePort(s), first, 'released once the record is written');
+});
+
+test('reserve ignores expired reservations', async () => {
+  const s = { config: { startPort: 5340 }, worktrees: {}, nextPort: 5340, reservations: { 5340: Date.now() - 1000 } };
+  assert.equal(await ports.findFreePort(s), 5340);
+});
+
+// ---- shell/PowerShell injection through paths and args --------------------
+
+test('buildPowerShellScript: a branch name cannot inject a PowerShell subexpression', () => {
+  const script = session.buildPowerShellScript({
+    worktreePath: 'C:\\wt\\wt-feat$(calc)',
+    appPath: 'C:\\wt\\wt-feat$(calc)',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', withClaude: true
+  });
+  assert.ok(!/[^`]\$\(calc\)/.test(script), 'every $( must be backtick-escaped');
+  assert.match(script, /`\$\(calc\)/);
+});
+
+test('buildBashSessionScript: a branch name cannot inject a bash subshell', () => {
+  const s = session.buildBashSessionScript({
+    worktreePath: '/wt/wt-feat$(touch pwned)',
+    appPath: '/wt/wt-feat$(touch pwned)',
+    port: 5005, portEnvVar: 'PORT', devCommand: 'npm run dev',
+    dashboardPort: 4999, worktreeId: 'abc', claudeArgs: '', withClaude: true
+  });
+  assert.ok(!/[^\\]\$\(touch/.test(s), 'every $( must be backslash-escaped');
+});
+
+test('claudeArgsFor: refuses extra args carrying shell metacharacters', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model x; curl evil.test' }), /metacharacters/);
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model $(id)' }), /metacharacters/);
+  assert.throws(() => session.claudeArgsFor({ claudeSessionId: id, extra: '--model `id`' }), /metacharacters/);
+  // ordinary flags still go through
+  assert.equal(
+    session.claudeArgsFor({ claudeSessionId: id, hasTranscript: true, extra: '--model opus' }),
+    `--resume ${id} --model opus`
+  );
+});
+
+// ---- the session-exit callback is token-gated ----------------------------
+
+test('session scripts carry the per-launch exit token, and omit it when absent', () => {
+  const args = {
+    worktreePath: '/wt/f', appPath: '/wt/f', port: 5005, portEnvVar: 'PORT',
+    devCommand: 'npm run dev', dashboardPort: 4999, worktreeId: 'abc',
+    claudeArgs: '', withClaude: true
+  };
+  const withToken = session.buildBashSessionScript({ ...args, sessionToken: 'deadbeef' });
+  assert.match(withToken, /session\/exit\?token=deadbeef/);
+  const ps = session.buildPowerShellScript({ ...args, sessionToken: 'deadbeef' });
+  assert.match(ps, /session\/exit\?token=deadbeef/);
+  // builders called without a token (tests, older records) emit a clean URL
+  assert.match(session.buildBashSessionScript(args), /session\/exit"/);
+});
+
+// ---- transcript directory matching ---------------------------------------
+
+test('findProjectLogDir: same folder name under two roots does not collide', () => {
+  const projects = tmpdir('wtd-projects-');
+  fs.mkdirSync(path.join(projects, '-repo-a-wt-feature'), { recursive: true });
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  fs.writeFileSync(path.join(projects, '-repo-a-wt-feature', `${id}.jsonl`), '{}\n');
+
+  // repo-b's worktree has the same basename but no transcripts of its own
+  assert.strictEqual(usage.transcriptExists('/repo/b/wt-feature', id, projects), false);
+  assert.strictEqual(usage.transcriptExists('/repo/a/wt-feature', id, projects), true);
+});
+
+test('findProjectLogDir: a dot-directory root still matches', () => {
+  const projects = tmpdir('wtd-projects-');
+  // the CLI flattens the dot in ".worktrees" to a dash
+  fs.mkdirSync(path.join(projects, '-repo--worktrees-wt-feature'), { recursive: true });
+  const id = 'aaaaaaaa-0000-4000-8000-000000000001';
+  fs.writeFileSync(path.join(projects, '-repo--worktrees-wt-feature', `${id}.jsonl`), '{}\n');
+  assert.strictEqual(usage.transcriptExists('/repo/.worktrees/wt-feature', id, projects), true);
+});
+
+// ---- node_modules removal must never follow the link ----------------------
+
+test('removeNodeModules: unlinks the junction without touching the main tree', () => {
+  const root = tmpdir('wtd-nm-');
+  const main = path.join(root, 'main', 'node_modules');
+  const worktree = path.join(root, 'wt');
+  fs.mkdirSync(main, { recursive: true });
+  fs.mkdirSync(worktree, { recursive: true });
+  fs.writeFileSync(path.join(main, 'marker.txt'), 'keep me');
+  const link = path.join(worktree, 'node_modules');
+  fs.symlinkSync(main, link, 'dir');
+
+  wt.removeNodeModules(link);
+
+  assert.strictEqual(fs.existsSync(link), false, 'link removed');
+  assert.strictEqual(fs.existsSync(path.join(main, 'marker.txt')), true, 'main node_modules untouched');
+});

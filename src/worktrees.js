@@ -38,6 +38,38 @@ function resolveAppPath(rootPath, appDir) {
   return resolved;
 }
 
+// Paths typed into Settings arrive however the user's shell or file explorer
+// produced them: wrapped in quotes, trailing-slashed, or written with the other
+// platform's separator. Normalizing to one absolute form means the same project
+// entered two different ways is recognised as the same project, and keeps every
+// later path.join predictable regardless of which OS the dashboard runs on.
+function normalizeUserPath(input) {
+  const raw = String(input == null ? '' : input).trim().replace(/^["']|["']$/g, '').trim();
+  if (!raw) return '';
+  const unified = process.platform === 'win32' ? raw.replace(/\//g, '\\') : raw;
+  return path.resolve(unified);
+}
+
+// The npm scripts defined by the app's package.json, so the UI can offer
+// `npm run dev-mt` / `npm run dev-tt` as a dropdown instead of making the user
+// remember which script this project uses. Best effort: a missing or unreadable
+// package.json just means no suggestions.
+function listScripts({ repoPath, appDir }) {
+  if (!repoPath) return [];
+  let pkgPath;
+  try {
+    pkgPath = path.join(resolveAppPath(repoPath, appDir), 'package.json');
+  } catch {
+    return [];
+  }
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    return Object.keys(pkg.scripts || {});
+  } catch {
+    return [];
+  }
+}
+
 function sanitizeBranchForDir(branch) {
   return branch.replace(/[\\/:*?"<>|]/g, '-');
 }
@@ -104,14 +136,45 @@ async function linkNodeModules({ repoPath, worktreePath, appDir }) {
   return { linked: Object.values(results).some((r) => r.linked), levels: results };
 }
 
+// Remove whatever is at `dest` WITHOUT ever recursing through a link. This
+// node_modules is usually a junction/symlink into the MAIN checkout, so a
+// recursive delete that followed it would wipe the real dependency tree the
+// whole project shares. lstat (not stat) is what tells the two apart.
+function removeNodeModules(dest) {
+  let st;
+  try {
+    st = fs.lstatSync(dest);
+  } catch {
+    return; // nothing there
+  }
+  if (st.isSymbolicLink()) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {
+      // Windows junctions sometimes need rmdir rather than unlink. Still not
+      // recursive, so the target is never touched.
+      fs.rmdirSync(dest);
+    }
+    return;
+  }
+  fs.rmSync(dest, { recursive: true, force: true });
+}
+
 async function reinstallDeps({ worktreePath, appDir }) {
   const appPath = resolveAppPath(worktreePath, appDir);
-  const dest = path.join(appPath, 'node_modules');
-  if (fs.existsSync(dest)) {
-    // remove the junction/symlink (or folder) first
-    fs.rmSync(dest, { recursive: true, force: true });
-  }
+  removeNodeModules(path.join(appPath, 'node_modules'));
   await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install'], appPath);
+}
+
+// Does this worktree's .gitignore cover `relPath`? `git check-ignore` exits 1
+// (i.e. rejects) when the path is NOT ignored, which is the answer we want.
+async function isIgnored({ worktreePath, relPath }) {
+  try {
+    await run('git', ['check-ignore', '-q', '--', relPath], worktreePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function copyAndPatchEnvFile({ repoPath, worktreePath, appDir, envFileName, portEnvVar, port }) {
@@ -192,9 +255,13 @@ async function listGitWorktrees({ repoPath }) {
 
 module.exports = {
   resolveAppPath,
+  normalizeUserPath,
+  listScripts,
   createWorktree,
   linkNodeModules,
   reinstallDeps,
+  removeNodeModules,
+  isIgnored,
   copyAndPatchEnvFile,
   removeWorktree,
   pruneWorktrees,

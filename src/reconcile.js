@@ -25,14 +25,22 @@ async function reconcile(s, opts = {}) {
   const repoPath = s.config && s.config.repoPath;
   if (!repoPath) return s;
 
+  // "git told us there are no worktrees" and "we could not ask git" look the
+  // same downstream, but mean opposite things: the second must not be allowed
+  // to mark every record missing. A flaky git call (index.lock contention, the
+  // repo on a disconnected share) would otherwise wipe the status of live
+  // sessions on the next 5s poll.
   let gitList = opts.gitList;
+  let gitOk = true;
   if (!gitList) {
     try {
       gitList = await wt.listGitWorktrees({ repoPath });
     } catch {
       gitList = [];
+      gitOk = false;
     }
   }
+  if (!gitOk) return s;
 
   const tracked = new Set(Object.values(s.worktrees).map((w) => norm(w.path)));
   const repoNorm = norm(repoPath);
