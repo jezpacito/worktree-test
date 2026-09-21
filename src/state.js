@@ -24,15 +24,19 @@ const DEFAULT_STATE = {
   // config describes the ONE project this dashboard instance is pointed at.
   // Run `wtd init` again (or use the UI) to point it at a different project.
   config: {
+    // null on any of the five below means "work it out from the project". They
+    // are stored null rather than pre-filled with a default, because a default
+    // sitting in the settings form is indistinguishable from a value the user
+    // typed -- and would then quietly beat detection forever.
     repoPath: null,          // absolute path to the main checkout (git root)
-    appDir: '',              // repo-root-relative folder the app lives in (e.g. 'src/renderer');
-                             // blank means the app is at the repo root. The dev command,
+    appDir: null,            // repo-root-relative folder the app lives in (e.g. 'src/renderer');
+                             // detected from where package.json is. The dev command,
                              // the env file and node_modules all resolve inside it.
-    devCommand: 'npm run dev', // command used to start the dev server
-    devServerScheme: 'http', // 'https' for a project whose dev server serves TLS;
+    devCommand: null,        // command used to start the dev server
+    devServerScheme: null,   // 'https' for a project whose dev server serves TLS;
                              // only decides how the dashboard links to it
-    portEnvVar: 'PORT',      // env var name the dev command reads for its port
-    envFileName: '.env.development',
+    portEnvVar: null,        // env var name the dev command reads for its port
+    envFileName: null,
     startPort: 5002,
     worktreesRoot: null,     // where sibling worktree folders get created; default: sibling of repoPath
     dashboardPort: 4999,

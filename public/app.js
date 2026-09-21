@@ -18,12 +18,26 @@ let config = {};
 
 async function loadConfig() {
   config = await api('/api/config');
+  // A box shows only what you chose; what will actually be used sits in the
+  // placeholder. Empty therefore reads as "auto", not as "nothing set" -- and a
+  // default is never put in a box where it would look like your own answer and
+  // silently beat detection on the next save.
+  const auto = config.effective || {};
+  const bind = (id, chosen, resolved) => {
+    $(id).value = chosen || '';
+    // No "(detected)" suffix: the section this sits in already says so, and the
+    // suffix pushed a real dev command out of the visible width.
+    $(id).placeholder = resolved || 'detected';
+  };
+
   $('cfgRepoPath').value = config.repoPath || '';
-  $('cfgAppDir').value = config.appDir || '';
-  $('cfgDevCommand').value = config.devCommand || '';
-  $('cfgDevServerScheme').value = config.devServerScheme || 'http';
-  $('cfgPortEnvVar').value = config.portEnvVar || '';
-  $('cfgEnvFile').value = config.envFileName || '';
+  bind('cfgAppDir', config.appDir, auto.appDir || 'repo root');
+  bind('cfgDevCommand', config.devCommand, auto.devCommand);
+  bind('cfgPortEnvVar', config.portEnvVar, auto.portEnvVar);
+  bind('cfgEnvFile', config.envFileName, auto.envFileName);
+  $('cfgDevServerScheme').value = config.devServerScheme || '';
+  $('cfgDevServerScheme').querySelector('option[value=""]').textContent =
+    auto.devServerScheme ? `auto (${auto.devServerScheme})` : 'auto';
   $('cfgStartPort').value = config.startPort || '';
   $('cfgWorktreesRoot').value = config.worktreesRoot || '';
   $('cfgCostThreshold').value = config.costThreshold ?? '';
@@ -31,7 +45,7 @@ async function loadConfig() {
   renderAppDirHint();
   renderDetection();
   renderBrandSub();
-  $('newDevCommand').placeholder = config.devCommand || 'npm run dev';
+  $('newDevCommand').placeholder = auto.devCommand || 'npm run dev';
   await Promise.all([loadNextPort(), loadScriptSuggestions()]);
 }
 
@@ -95,7 +109,9 @@ function renderDetection() {
 // obvious before any worktree gets created.
 function renderAppDirHint() {
   const repo = $('cfgRepoPath').value.trim();
-  const appDir = $('cfgAppDir').value.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+  const typed = $('cfgAppDir').value.trim();
+  const appDir = (typed || (config.effective || {}).appDir || '')
+    .replace(/^[\\/]+|[\\/]+$/g, '');
   const hint = $('appDirHint');
   if (!repo) { hint.innerHTML = ''; return; }
   const sep = repo.includes('\\') ? '\\' : '/';
@@ -169,7 +185,8 @@ $('createWorktree').addEventListener('click', async () => {
       body: JSON.stringify({ branch, baseRef, port, devCommand, withClaude })
     });
     status.className = 'form-note ok';
-    status.textContent = `${w.branch} is running on port ${w.port} via \`${w.devCommand || config.devCommand}\`.`;
+    const ran = w.devCommand || (config.effective || {}).devCommand || 'the project dev command';
+    status.textContent = `${w.branch} is running on port ${w.port} via \`${ran}\`.`;
     $('newBranch').value = '';
     $('newBaseRef').value = '';
     $('newDevCommand').value = '';
@@ -256,7 +273,7 @@ const KEBAB = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" strok
 // explicit setting rather than copying location.protocol. The host does follow
 // the address bar, so the link points at the right machine behind a proxy.
 function devServerOrigin(port) {
-  const scheme = config.devServerScheme === 'https' ? 'https' : 'http';
+  const scheme = (config.effective || config).devServerScheme === 'https' ? 'https' : 'http';
   const host = location.hostname || 'localhost';
   return `${scheme}://${host.includes(':') ? `[${host}]` : host}:${port}`;
 }

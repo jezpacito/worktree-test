@@ -107,6 +107,43 @@ function applyReconcile(cur, reconciled) {
   }
 }
 
+// Used only when a project offers nothing better: a repo with no package.json
+// still has to launch something.
+const FALLBACKS = {
+  appDir: '',
+  devCommand: 'npm run dev',
+  portEnvVar: 'PORT',
+  devServerScheme: 'http',
+  envFileName: '.env.development'
+};
+
+// A stored null on any of these means "detect it", so every consumer has to
+// resolve before use: stored value, else what the project says, else a fallback.
+function effectiveConfig(config) {
+  const out = { ...config };
+  const needsDetection = Object.keys(FALLBACKS).some((k) => config[k] == null);
+
+  let found = {};
+  if (needsDetection && config.repoPath) {
+    try {
+      const appDir = config.appDir == null ? detect.detectAppDir(config.repoPath) : config.appDir;
+      found = detect.detectProject({
+        repoPath: config.repoPath,
+        appPath: wt.resolveAppPath(config.repoPath, appDir),
+        envFileName: config.envFileName || FALLBACKS.envFileName
+      });
+      found.appDir = appDir;
+    } catch {
+      found = {};
+    }
+  }
+
+  for (const [key, fallback] of Object.entries(FALLBACKS)) {
+    if (out[key] == null) out[key] = found[key] != null ? found[key] : fallback;
+  }
+  return out;
+}
+
 // The env file this tool wrote into the worktree, as a git pathspec -- but only
 // when the project does NOT gitignore it. In that case the auto-commit must
 // leave it alone: it holds a port this tool rewrote for one worktree, and
@@ -148,16 +185,19 @@ function createApp({ dashboardPort } = {}) {
   // leaving a field blank means "work it out for me" rather than "use nothing".
   function detectionFor(config) {
     if (!config.repoPath) return null;
+    // Against the RESOLVED config: with the app subfolder on auto, config.appDir
+    // is null, and detecting from the repo root would find nothing to report.
+    const cfg = effectiveConfig(config);
     try {
       const result = detect.detectProject({
-        repoPath: config.repoPath,
-        appPath: wt.resolveAppPath(config.repoPath, config.appDir),
-        envFileName: config.envFileName || '.env.development'
+        repoPath: cfg.repoPath,
+        appPath: wt.resolveAppPath(cfg.repoPath, cfg.appDir),
+        envFileName: cfg.envFileName
       });
       // Said first because it changes what every other line below refers to.
-      if (config.appDir) {
+      if (cfg.appDir) {
         result.notes.unshift(
-          `The app is in ${config.appDir}, not at the repo root, so the dev command, `
+          `The app is in ${cfg.appDir}, not at the repo root, so the dev command, `
           + `the env file and node_modules all resolve inside it.`
         );
       }
@@ -167,9 +207,20 @@ function createApp({ dashboardPort } = {}) {
     }
   }
 
+  // The form binds to the RAW config, so a box is empty exactly when that
+  // setting is on auto; `effective` is what will actually be used, shown as the
+  // box's placeholder.
+  function configPayload(config) {
+    return {
+      ...config,
+      effective: effectiveConfig(config),
+      detected: detectionFor(config),
+      capabilities: capabilities()
+    };
+  }
+
   app.get('/api/config', (req, res) => {
-    const s = state.load();
-    res.json({ ...s.config, capabilities: capabilities(), detected: detectionFor(s.config) });
+    res.json(configPayload(state.load().config));
   });
 
   app.post('/api/config', (req, res) => {
@@ -211,41 +262,31 @@ function createApp({ dashboardPort } = {}) {
     }
     // Detection runs against what the config is ABOUT to become, so switching
     // project and clearing the dev command in one save still detects correctly.
-    const pendingRepo = repoPath || s.config.repoPath;
     const typedAppDir = appDir !== undefined
       ? String(appDir).trim().replace(/^[\\/]+|[\\/]+$/g, '')
       : s.config.appDir;
 
-    // A blank subfolder means "find the app for me", which answers blank again
-    // for the ordinary repo that keeps its package.json at the root.
-    let foundAppDir = '';
-    if (!typedAppDir && pendingRepo) {
-      try {
-        foundAppDir = detect.detectAppDir(pendingRepo);
-      } catch {
-        foundAppDir = '';
-      }
-    }
-
-    const pending = {
-      repoPath: pendingRepo,
-      appDir: typedAppDir || foundAppDir,
-      envFileName: envFileName || s.config.envFileName
-    };
-    const detected = detectionFor(pending) || {};
-
     // A field left blank means "detect it". Typing something always wins, and
     // clearing it again hands control back to detection.
+    // A blank box means auto, stored as null. Only what the user actually typed
+    // is kept, so detection stays in charge of everything else -- including
+    // later, when the project changes.
+    const chosen = (value) => {
+      if (value === undefined) return undefined;
+      const trimmed = String(value).trim();
+      return trimmed === '' ? null : trimmed;
+    };
+
     s.config = {
       ...s.config,
       ...(repoPath ? { repoPath } : {}),
-      appDir: pending.appDir,
-      devCommand: devCommand || detected.devCommand || s.config.devCommand,
-      devServerScheme: (devServerScheme ? String(devServerScheme).trim().toLowerCase() : null)
-        || detected.devServerScheme || s.config.devServerScheme,
-      portEnvVar: (portEnvVar ? String(portEnvVar).trim() : null)
-        || detected.portEnvVar || s.config.portEnvVar,
-      envFileName: envFileName || detected.envFileName || s.config.envFileName,
+      ...(appDir !== undefined ? { appDir: typedAppDir || null } : {}),
+      ...(devCommand !== undefined ? { devCommand: chosen(devCommand) } : {}),
+      ...(devServerScheme !== undefined
+        ? { devServerScheme: chosen(devServerScheme) && String(devServerScheme).trim().toLowerCase() }
+        : {}),
+      ...(portEnvVar !== undefined ? { portEnvVar: chosen(portEnvVar) } : {}),
+      ...(envFileName !== undefined ? { envFileName: chosen(envFileName) } : {}),
       ...(startPort ? { startPort: Number(startPort) } : {}),
       ...(parsedPricing ? { pricing: parsedPricing } : {}),
       ...(costThreshold !== undefined && costThreshold !== '' ? { costThreshold: Number(costThreshold) } : {}),
@@ -253,7 +294,7 @@ function createApp({ dashboardPort } = {}) {
     };
     if (!s.nextPort || s.nextPort < s.config.startPort) s.nextPort = s.config.startPort;
     state.save(s);
-    res.json({ ...s.config, capabilities: capabilities(), detected: detectionFor(s.config) });
+    res.json(configPayload(s.config));
   });
 
   // The port the next worktree would get, so the New Worktree form can pre-fill
@@ -270,7 +311,8 @@ function createApp({ dashboardPort } = {}) {
   // npm scripts from the configured project, offered as dev-command suggestions.
   app.get('/api/scripts', (req, res) => {
     const s = state.load();
-    const scripts = wt.listScripts({ repoPath: s.config.repoPath, appDir: s.config.appDir });
+    const cfg = effectiveConfig(s.config);
+    const scripts = wt.listScripts({ repoPath: cfg.repoPath, appDir: cfg.appDir });
     res.json({ scripts, commands: scripts.map((n) => `npm run ${n}`) });
   });
 
@@ -332,7 +374,8 @@ function createApp({ dashboardPort } = {}) {
 
   app.post('/api/worktrees', async (req, res) => {
     const s = state.load();
-    const { repoPath, worktreesRoot } = s.config;
+    const cfg = effectiveConfig(s.config);
+    const { repoPath, worktreesRoot } = cfg;
     if (!repoPath) return res.status(400).json({ error: 'Set the project (repoPath) in Settings first.' });
 
     const { branch, baseRef, claudeArgs, withClaude } = req.body;
@@ -361,16 +404,16 @@ function createApp({ dashboardPort } = {}) {
 
     try {
       const worktreePath = await wt.createWorktree({ repoPath, worktreesRoot, branch, baseRef });
-      const nmResult = await wt.linkNodeModules({ repoPath, worktreePath, appDir: s.config.appDir });
+      const nmResult = await wt.linkNodeModules({ repoPath, worktreePath, appDir: cfg.appDir });
       if (port == null) port = await allocatePort(s);
       // Hold the port until this record exists, so a second create started at
       // the same moment is not handed the same number.
       state.mutate((cur) => ports.reserve(cur, port));
       wt.copyAndPatchEnvFile({
         repoPath, worktreePath,
-        appDir: s.config.appDir,
-        envFileName: s.config.envFileName,
-        portEnvVar: s.config.portEnvVar,
+        appDir: cfg.appDir,
+        envFileName: cfg.envFileName,
+        portEnvVar: cfg.portEnvVar,
         port
       });
 
@@ -398,10 +441,10 @@ function createApp({ dashboardPort } = {}) {
       const launch = await session.launchSession({
         worktreeId: id,
         worktreePath,
-        appPath: wt.resolveAppPath(worktreePath, s.config.appDir),
+        appPath: wt.resolveAppPath(worktreePath, cfg.appDir),
         port,
-        portEnvVar: s.config.portEnvVar,
-        devCommand: devCommand || s.config.devCommand,
+        portEnvVar: cfg.portEnvVar,
+        devCommand: devCommand || cfg.devCommand,
         dashboardPort: dashboardPort || s.config.dashboardPort,
         claudeArgs: session.claudeArgsFor({
           claudeSessionId: record.claudeSessionId,
@@ -433,7 +476,8 @@ function createApp({ dashboardPort } = {}) {
     const w = s.worktrees[req.params.id];
     if (!w) return res.status(404).json({ error: 'unknown worktree id' });
     if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
-    if (!s.config.repoPath) return res.status(400).json({ error: 'Set the project (repoPath) in Settings first.' });
+    const cfg = effectiveConfig(s.config);
+    if (!cfg.repoPath) return res.status(400).json({ error: 'Set the project (repoPath) in Settings first.' });
 
     const wantClaude = req.body.withClaude !== false;
 
@@ -443,9 +487,9 @@ function createApp({ dashboardPort } = {}) {
         state.mutate((cur) => ports.reserve(cur, w.port));
       }
 
-      const appPath = wt.resolveAppPath(w.path, s.config.appDir);
+      const appPath = wt.resolveAppPath(w.path, cfg.appDir);
       if (!fs.existsSync(path.join(appPath, 'node_modules'))) {
-        w.nodeModules = await wt.linkNodeModules({ repoPath: s.config.repoPath, worktreePath: w.path, appDir: s.config.appDir });
+        w.nodeModules = await wt.linkNodeModules({ repoPath: s.config.repoPath, worktreePath: w.path, appDir: cfg.appDir });
       }
 
       // Patch the env file only on first adoption -- later starts leave any
@@ -454,9 +498,9 @@ function createApp({ dashboardPort } = {}) {
         wt.copyAndPatchEnvFile({
           repoPath: s.config.repoPath,
           worktreePath: w.path,
-          appDir: s.config.appDir,
-          envFileName: s.config.envFileName,
-          portEnvVar: s.config.portEnvVar,
+          appDir: cfg.appDir,
+          envFileName: cfg.envFileName,
+          portEnvVar: cfg.portEnvVar,
           port: w.port
         });
         w.adopted = true;
@@ -482,8 +526,8 @@ function createApp({ dashboardPort } = {}) {
         worktreePath: w.path,
         appPath,
         port: w.port,
-        portEnvVar: s.config.portEnvVar,
-        devCommand: w.devCommand || s.config.devCommand,
+        portEnvVar: cfg.portEnvVar,
+        devCommand: w.devCommand || cfg.devCommand,
         dashboardPort: dashboardPort || s.config.dashboardPort,
         claudeArgs: session.claudeArgsFor({
           claudeSessionId: w.claudeSessionId,
@@ -548,7 +592,7 @@ function createApp({ dashboardPort } = {}) {
         const result = await git.commitAll({
           worktreePath: w.path,
           message: `WIP: ${w.branch} (auto-commit on session exit)`,
-          excludePaths: await envFileExcludes(s.config, w.path)
+          excludePaths: await envFileExcludes(effectiveConfig(s.config), w.path)
         });
         state.mutate((cur) => {
           const rec = cur.worktrees[req.params.id];
@@ -573,7 +617,7 @@ function createApp({ dashboardPort } = {}) {
       const result = await git.commitAll({
         worktreePath: w.path,
         message: req.body.message || `WIP: ${w.branch}`,
-        excludePaths: await envFileExcludes(s.config, w.path)
+        excludePaths: await envFileExcludes(effectiveConfig(s.config), w.path)
       });
       state.mutate((cur) => {
         const rec = cur.worktrees[req.params.id];
@@ -625,6 +669,7 @@ function createApp({ dashboardPort } = {}) {
   // Deliberately does not change status or allocate anything -- it is not a session.
   app.post('/api/worktrees/:id/terminal', async (req, res) => {
     const s = state.load();
+    const cfg = effectiveConfig(s.config);
     const w = s.worktrees[req.params.id];
     if (!w) return res.status(404).json({ error: 'unknown worktree id' });
     if (!fs.existsSync(w.path)) return res.status(400).json({ error: 'worktree folder is missing on disk' });
@@ -632,10 +677,10 @@ function createApp({ dashboardPort } = {}) {
       const result = await session.openTerminal({
         worktreeId: w.id,
         worktreePath: w.path,
-        appPath: wt.resolveAppPath(w.path, s.config.appDir),
+        appPath: wt.resolveAppPath(w.path, cfg.appDir),
         port: w.port,
-        portEnvVar: s.config.portEnvVar,
-        devCommand: w.devCommand || s.config.devCommand
+        portEnvVar: cfg.portEnvVar,
+        devCommand: w.devCommand || cfg.devCommand
       });
       res.json(result);
     } catch (e) {
@@ -684,10 +729,11 @@ function createApp({ dashboardPort } = {}) {
 
   app.post('/api/worktrees/:id/reinstall', async (req, res) => {
     const s = state.load();
+    const cfg = effectiveConfig(s.config);
     const w = s.worktrees[req.params.id];
     if (!w) return res.status(404).json({ error: 'unknown worktree id' });
     try {
-      await wt.reinstallDeps({ worktreePath: w.path, appDir: s.config.appDir });
+      await wt.reinstallDeps({ worktreePath: w.path, appDir: cfg.appDir });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

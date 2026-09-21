@@ -268,18 +268,31 @@ test('saving Settings with the fields blank fills them in from the project', asy
       body: JSON.stringify({ repoPath: repo, devCommand: '', portEnvVar: '', devServerScheme: '' })
     });
     const cfg = await res.json();
-    assert.equal(cfg.devCommand, 'npm run dev -- --port {port}', 'vite needs the flag, not PORT=');
-    assert.equal(cfg.devServerScheme, 'https');
+    // nothing was typed, so nothing is stored: the values come from detection
+    assert.equal(cfg.devCommand, null, 'a blank box stores null, not a default');
+    assert.equal(cfg.effective.devCommand, 'npm run dev -- --port {port}', 'vite needs the flag, not PORT=');
+    assert.equal(cfg.effective.devServerScheme, 'https');
     assert.ok(cfg.detected.notes.some((n) => /ignores a PORT env var/.test(n)));
 
-    // ...and a value typed by hand is never overwritten by detection
+    // ...and a value typed by hand is stored, and wins
     const override = await (await fetch(`${base}/api/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ devCommand: 'pnpm serve --port {port}', devServerScheme: 'http' })
     })).json();
     assert.equal(override.devCommand, 'pnpm serve --port {port}');
-    assert.equal(override.devServerScheme, 'http');
+    assert.equal(override.effective.devCommand, 'pnpm serve --port {port}');
+    assert.equal(override.effective.devServerScheme, 'http');
+
+    // ...and clearing it hands that field back to detection
+    const cleared = await (await fetch(`${base}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ devCommand: '', devServerScheme: '' })
+    })).json();
+    assert.equal(cleared.devCommand, null);
+    assert.equal(cleared.effective.devCommand, 'npm run dev -- --port {port}');
+    assert.equal(cleared.effective.devServerScheme, 'https');
   } finally {
     server.close();
     fs.rmSync(repo, { recursive: true, force: true });

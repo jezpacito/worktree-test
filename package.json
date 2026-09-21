@@ -8,12 +8,16 @@
   },
   "scripts": {
     "start": "node bin/wtd.js start",
-    "test": "node --test"
+    "test": "node --test",
+    "test:ui": "node --test test/ui.test.js"
   },
   "dependencies": {
     "express": "^4.19.2"
   },
   "engines": {
     "node": ">=16"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

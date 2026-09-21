@@ -277,6 +277,22 @@ It listens on `127.0.0.1` only, and on top of that:
 npm test
 ```
 
+Pure logic, the HTTP API, and the real git operations all run with no setup.
+
+The browser tests (`npm run test:ui`) drive the dashboard in Chromium against a
+real throwaway repo: they check the page loads clean, that pointing it at a
+project fills in everything else, that an override sticks and clearing it goes
+back to auto, that a worktree can be created from the page and links to its dev
+server on the right scheme, and that nothing scrolls sideways on a phone.
+Screenshots of each step land in `test/screenshots/`.
+
+They need Playwright and a Chromium build, and skip themselves when either is
+missing, so `npm test` works on a machine with neither:
+
+```
+npm install && npx playwright install chromium
+```
+
 Covers the pure logic only: worktree-list parsing, cost and pricing math,
 optimization-tip rules, state reconciliation, app-subfolder path resolution,
 the env-file copy and patch, and the generated launcher scripts. The parts
